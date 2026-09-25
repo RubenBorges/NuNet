@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <iostream>
 #include <print>
+#include <cmath>
 
 using DenseLayer = bpy::DenseLayer;
 using Matrix = bpy::Matrix; // creates an alias named Matrix
 
 double relu(double x) { return std::max(0.0, x); }
+// Activation Function: Sigmoid (for final probability mapping)
+double sigmoid(double x) {return 1.0 / (1.0 + std::exp(-x));}
 
 int main() {
     try {

@@ -4,7 +4,7 @@
 #include <functional>
 #include <cstddef>
 #include <compare>
-
+#include <random>
 namespace bpy {
 
 class Matrix {
@@ -14,7 +14,7 @@ private:
     std::vector<double> data;
 
 public:
-    Matrix(std::size_t rows, std::size_t cols);
+    Matrix(std::size_t rows, std::size_t cols, double initValue = 0.0);
     ~Matrix() = default;
 
     // Element Access
@@ -46,7 +46,19 @@ public:
     
     std::size_t Rows() const { return rows; }
     std::size_t Cols() const { return cols; }
+
+
+    double get(int r, int c) const;
+    void set(int r, int c, double val);
+
     void print() const;
+
+    // Helper to fill a matrix with random weights between -0.5 and 0.5
+    static void randomize_matrix(Matrix& m) {
+        for (auto& val : m.data) {
+            val = ((double)rand() / RAND_MAX) - 0.5;
+        }
+    }
 };
 
 } // namespace bpy

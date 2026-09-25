@@ -6,8 +6,7 @@
 
 namespace bpy {
 
-Matrix::Matrix(std::size_t rows, std::size_t cols) 
-    : rows(rows), cols(cols), data(rows * cols, 0.0) {}
+Matrix::Matrix(std::size_t rows, std::size_t cols, double initValue): rows(rows), cols(cols), data(rows * cols, initValue) {}
 
 double& Matrix::operator()(std::size_t r, std::size_t c) {
     return data[r * cols + c];
@@ -114,5 +113,9 @@ void Matrix::print() const {
     }
     std::cout << "\n";
 }
+
+double Matrix::get(int r, int c) const { return data[r * cols + c]; }
+
+void Matrix::set(int r, int c, double val) { data[r * cols + c] = val; }
 
 } // namespace bpy

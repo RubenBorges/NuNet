@@ -1,6 +1,5 @@
 # Source and header setups
 set(SOURCES
-    NuNet.cpp
     Matrix.cpp
     DenseLayer.cpp
 )
@@ -9,7 +8,15 @@ set(HEADERPATHS
     include/DenseLayer.hpp
 )
 
-add_executable(NuNet ${SOURCES} ${HEADERPATHS})
+# add_executable(NuNet NuNet.cpp
+#     ${SOURCES}
+#     ${HEADERPATHS}
+# )
+
+add_executable(NuNet Conv_NuNet.cpp 
+    ${SOURCES} 
+    ${HEADERPATHS}
+)
 
 # =====================================================================
 # SYSTEM PACMAN LLAMA LINKING RULES (Arch Linux)
