@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/NuNet.dir/link.d CMakeFiles/NuNet.dir/NuNet.cpp.o CMakeFiles/NuNet.dir/Matrix.cpp.o CMakeFiles/NuNet.dir/DenseLayer.cpp.o -o NuNet
