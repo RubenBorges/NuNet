@@ -22,8 +22,8 @@ install(TARGETS NuNet
 )
 
 # 2. Copy the text documentation assets folder contents
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/model/"
-    DESTINATION "${DIST_DIR}/model"
-    FILES_MATCHING PATTERN "*.txt"
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}resources"
+    DESTINATION "${DIST_DIR}/resources"
+    FILES_MATCHING PATTERN "*.txt, *.nn"
 )
 

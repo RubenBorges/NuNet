@@ -1,31 +1,27 @@
 # Source and header setups
-set(NNT_SOURCES
-    NuNet/Matrix.cpp
-    NuNet/DenseLayer.cpp
-    NuNet/Tensor.cpp
-    NuNet/Conv2D.cpp
-    NuNet/CNN.cpp
-)
+# set(NNT_SOURCES
+    # NuNet/Matrix.cpp
+    # NuNet/DenseLayer.cpp
+    # NuNet/Tensor.cpp
+    # NuNet/Conv2D.cpp
+    # NuNet/CNN.cpp
+# )
 
-set(ODNNT_SOURCES
-    OneDNNet/OneDNNet.cpp
-    OneDNNet/debug.cpp
-    OneDNNet/DataLoader.cpp
+set(NNT_SOURCES
+    OneDNNet.cpp
+    debug.cpp
+    DataLoader.cpp
 
 )
 
 set(HEADERPATHS
-    include/Matrix.hpp
-    include/DenseLayer.hpp
-    include/Tensor.hpp
-    include/Conv2D.hpp
     include/DataLoader.hpp
     include/simdjson.h
     include/debug.hpp
 )
 
 # Initialize Binary Executable Target
-add_executable(NuNet ${ODNNT_SOURCES})
+add_executable(NuNet ${NNT_SOURCES})
 
 # Include directory lookup setup
 target_include_directories(NuNet PRIVATE

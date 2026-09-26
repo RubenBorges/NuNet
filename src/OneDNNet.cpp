@@ -13,6 +13,8 @@
 
 using namespace dnnl;
 using namespace bpy;
+ 
+constexpr const unsigned int sampleCount {10};
 
 // Generates a synthetic dataset of mixed images (some with humans, some without)
 void generate_dataset(std::vector<float>& data_buffer, std::vector<float>& label_buffer, size_t num_images, size_t rows, size_t cols, size_t channels) {
@@ -39,8 +41,94 @@ void generate_dataset(std::vector<float>& data_buffer, std::vector<float>& label
 
 float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
+void image_to_features(const convolution_forward& convolution, const eltwise_forward& activation,const pooling_forward& pooling,stream& execution_stream,
+    memory& images,memory& convolution_weights,memory& convolution_biases,memory& convolution_output,memory& features,memory& pooling_workspace){
+        convolution.execute(execution_stream, {
+        {DNNL_ARG_SRC, images},
+        {DNNL_ARG_WEIGHTS, convolution_weights},
+        {DNNL_ARG_BIAS, convolution_biases},
+        {DNNL_ARG_DST, convolution_output}
+    });
+    activation.execute(execution_stream, {
+        {DNNL_ARG_SRC, convolution_output},
+        {DNNL_ARG_DST, convolution_output}
+    });
+    pooling.execute(execution_stream, {
+        {DNNL_ARG_SRC, convolution_output},
+        {DNNL_ARG_DST, features},
+        {DNNL_ARG_WORKSPACE, pooling_workspace}
+    });
+}
+
+std::vector<float> expert_prediction(
+    const inner_product_forward& expert,
+    stream& execution_stream,
+    memory& features,
+    memory& weights,
+    memory& biases,
+    memory& logits,
+    size_t batch_count)
+{
+    expert.execute(execution_stream, {
+        {DNNL_ARG_SRC, features},
+        {DNNL_ARG_WEIGHTS, weights},
+        {DNNL_ARG_BIAS, biases},
+        {DNNL_ARG_DST, logits}
+    });
+    execution_stream.wait();
+
+    const float* values = static_cast<const float*>(logits.get_data_handle());
+    std::vector<float> probabilities(batch_count);
+    for (size_t sample = 0; sample < batch_count; ++sample) {
+        probabilities[sample] = sigmoid(values[sample]);
+    }
+    return probabilities;
+}
+
+std::vector<float> route_predictions(
+    const std::vector<std::vector<float>>& expert_probabilities,
+    const std::vector<std::vector<float>>& routing_weights)
+{
+    if (expert_probabilities.empty() || routing_weights.empty()) {
+        throw std::invalid_argument("Routing requires expert predictions and gate weights.");
+    }
+
+    const size_t expert_count = expert_probabilities.size();
+    const size_t batch_count = routing_weights.size();
+    for (const auto& predictions : expert_probabilities) {
+        if (predictions.size() != batch_count) {
+            throw std::invalid_argument("Expert predictions must have the same batch size.");
+        }
+    }
+
+    std::vector<float> routed(batch_count, 0.0f);
+    for (size_t sample = 0; sample < batch_count; ++sample) {
+        if (routing_weights[sample].size() != expert_count) {
+            throw std::invalid_argument("Each sample needs one routing weight per expert.");
+        }
+
+        float weight_sum = 0.0f;
+        for (float weight : routing_weights[sample]) {
+            if (!std::isfinite(weight) || weight < 0.0f) {
+                throw std::invalid_argument("Routing weights must be finite and non-negative.");
+            }
+            weight_sum += weight;
+        }
+        if (weight_sum <= 0.0f) {
+            throw std::invalid_argument("Routing weights for each sample must sum to a positive value.");
+        }
+
+        for (size_t expert_index = 0; expert_index < expert_count; ++expert_index) {
+            routed[sample] += expert_probabilities[expert_index][sample] *
+                routing_weights[sample][expert_index] / weight_sum;
+        }
+    }
+    return routed;
+}
+
 
 int main(int, char* argv[]) {
+
     // --------------------------------------------------------
     // TIME & LOGGER INITIALIZATION
     // --------------------------------------------------------
@@ -50,7 +138,7 @@ int main(int, char* argv[]) {
     std::chrono::hh_mm_ss<std::chrono::nanoseconds> time{now - current_day};
 
         const std::filesystem::path runtime_dir = std::filesystem::absolute(argv[0]).lexically_normal().parent_path();
-        const std::filesystem::path model_dir = runtime_dir.parent_path() / "model";
+        const std::filesystem::path model_dir = runtime_dir.parent_path() / "resources/model";
         dbglog logger(date, runtime_dir / "debug.log");
     DataLoader im(logger);
     
@@ -60,7 +148,7 @@ int main(int, char* argv[]) {
     // --------------------------------------------------------
     // DATASET & BATCH HYPERPARAMETERS
     // --------------------------------------------------------
-    constexpr int64_t batch_size = 100; 
+    constexpr int64_t batch_size = sampleCount; 
     constexpr size_t fallback_dataset_size = 10;
     size_t total_dataset_size = 0;
     size_t batch_count = 0;
@@ -155,9 +243,7 @@ int main(int, char* argv[]) {
                 static_cast<size_t>(batch_size), input_rows, input_cols, input_channels
             );
 
-            if (!load_success) {
-                throw std::runtime_error("Loader encountered size bounds issue matching dataset sizes.");
-            }
+            if (!load_success) {throw std::runtime_error("Loader encountered size bounds issue matching dataset sizes.");}
         } 
         catch (const std::exception& e) {
             std::println(std::cerr, "Warning: [Data Load Failure] Exception caught: {}", e.what());
@@ -212,8 +298,7 @@ int main(int, char* argv[]) {
 
         size_t image_size_bytes = input_channels * input_rows * input_cols;
 
-        std::println("Dataset selection: {} of {} available images, Batch Size = {}, Batch Count = {}",
-                 total_dataset_size, im.available_image_count, batch_size, batch_count);
+        std::println("Dataset selection: {} of {} available images, Batch Size = {}, Batch Count = {}",total_dataset_size, im.available_image_count, batch_size, batch_count);
         std::println("Starting dataset mini-batch optimization loop...");
         std::println("--------------------------------------------------");
 
@@ -232,16 +317,20 @@ int main(int, char* argv[]) {
                 std::copy_n(dataset_images.begin() + (offset * image_size_bytes),
                             current_batch_size * image_size_bytes, src_handle);
 
-                // 1. FORWARD PASS STEP
-                prim_conv_fwd.execute(strm, {{DNNL_ARG_SRC, src_mem}, {DNNL_ARG_WEIGHTS, conv_w_mem}, {DNNL_ARG_BIAS, conv_b_mem}, {DNNL_ARG_DST, conv_dst_mem}});
-                prim_relu_fwd.execute(strm, {{DNNL_ARG_SRC, conv_dst_mem}, {DNNL_ARG_DST, conv_dst_mem}});
-                prim_pool_fwd.execute(strm, {{DNNL_ARG_SRC, conv_dst_mem}, {DNNL_ARG_DST, pool_dst_mem}, {DNNL_ARG_WORKSPACE, pool_workspace_mem}});
-                prim_fc_fwd.execute(strm, {{DNNL_ARG_SRC, pool_dst_mem}, {DNNL_ARG_WEIGHTS, fc_w_mem}, {DNNL_ARG_BIAS, fc_b_mem}, {DNNL_ARG_DST, fc_dst_mem}});
-                strm.wait();
+                image_to_features(
+                    prim_conv_fwd, prim_relu_fwd, prim_pool_fwd, strm,
+                    src_mem, conv_w_mem, conv_b_mem, conv_dst_mem,
+                    pool_dst_mem, pool_workspace_mem);
+                auto expert_probabilities = expert_prediction(
+                    prim_fc_fwd, strm, pool_dst_mem, fc_w_mem, fc_b_mem,
+                    fc_dst_mem, static_cast<size_t>(batch_size));
+                std::vector<std::vector<float>> expert_outputs{std::move(expert_probabilities)};
+                std::vector<std::vector<float>> routing_weights(
+                    static_cast<size_t>(batch_size), std::vector<float>{1.0f});
+                const auto routed_probabilities = route_predictions(expert_outputs, routing_weights);
 
                 // 2. MINI-BATCH LOSS & LOSS GRADIENT EVALUATION
                 float batch_loss = 0.0f;
-                float* fc_out = static_cast<float*>(fc_dst_mem.get_data_handle());
                 float* diff_fc_dst = static_cast<float*>(diff_fc_dst_mem.get_data_handle());
 
                 for (int64_t b = 0; b < batch_size; ++b) {
@@ -250,8 +339,7 @@ int main(int, char* argv[]) {
                         continue;
                     }
 
-                    float logit = fc_out[b];
-                    float probability = sigmoid(logit);
+                    float probability = routed_probabilities[static_cast<size_t>(b)];
                     float target = dataset_labels[offset + b];
 
                     batch_loss -= (target * std::log(probability + 1e-7f) + (1.0f - target) * std::log(1.0f - probability + 1e-7f));
@@ -289,9 +377,7 @@ int main(int, char* argv[]) {
         std::println("Loaded pre-compiled weights. Preparing FLIR samples for inference...");
         try {
             auto flir_label_map = im.parse_flir_v2_thermal_labels(json_annotation_path);
-            if (flir_label_map.empty() || !im.load_images_with_map(
-                    dataset_images, dataset_labels, data_path, flir_label_map,
-                    static_cast<size_t>(batch_size), input_rows, input_cols, input_channels)) {
+            if (flir_label_map.empty() || !im.load_images_with_map(dataset_images, dataset_labels, data_path, flir_label_map,static_cast<size_t>(batch_size), input_rows, input_cols, input_channels)) {
                 std::println(std::cerr, "Error: Could not load FLIR samples for inference.");
                 return EXIT_FAILURE;
             }
@@ -332,6 +418,10 @@ int main(int, char* argv[]) {
     auto inference_fc_src = memory(fc_src_md, eng, inference_pool_dst.get_data_handle());
     auto inference_fc_dst = memory(fc_dst_md, eng);
     auto inference_pool_workspace = memory(pool_fwd_pd.workspace_desc(), eng);
+    auto inference_conv_primitive = convolution_forward(conv_fwd_pd);
+    auto inference_relu_primitive = eltwise_forward(relu_fwd_pd);
+    auto inference_pool_primitive = pooling_forward(pool_fwd_pd);
+    auto inference_expert_primitive = inner_product_forward(fc_fwd_pd);
 
     size_t human_prediction_count = 0;
     size_t displayed_prediction_count = 0;
@@ -347,32 +437,20 @@ int main(int, char* argv[]) {
         std::copy_n(dataset_images.begin() + offset * inference_image_values,
                     current_batch_values, inference_source);
 
-        convolution_forward(conv_fwd_pd).execute(strm, {
-            {DNNL_ARG_SRC, inference_src_mem},
-            {DNNL_ARG_WEIGHTS, inference_conv_weights},
-            {DNNL_ARG_BIAS, inference_conv_biases},
-            {DNNL_ARG_DST, inference_conv_dst}
-        });
-        eltwise_forward(relu_fwd_pd).execute(strm, {
-            {DNNL_ARG_SRC, inference_conv_dst},
-            {DNNL_ARG_DST, inference_conv_dst}
-        });
-        pooling_forward(pool_fwd_pd).execute(strm, {
-            {DNNL_ARG_SRC, inference_conv_dst},
-            {DNNL_ARG_DST, inference_pool_dst},
-            {DNNL_ARG_WORKSPACE, inference_pool_workspace}
-        });
-        inner_product_forward(fc_fwd_pd).execute(strm, {
-            {DNNL_ARG_SRC, inference_fc_src},
-            {DNNL_ARG_WEIGHTS, inference_fc_weights},
-            {DNNL_ARG_BIAS, inference_fc_biases},
-            {DNNL_ARG_DST, inference_fc_dst}
-        });
-        strm.wait();
+        image_to_features(
+            inference_conv_primitive, inference_relu_primitive, inference_pool_primitive, strm,
+            inference_src_mem, inference_conv_weights, inference_conv_biases,
+            inference_conv_dst, inference_pool_dst, inference_pool_workspace);
+        auto expert_probabilities = expert_prediction(
+            inference_expert_primitive, strm, inference_fc_src, inference_fc_weights,
+            inference_fc_biases, inference_fc_dst, static_cast<size_t>(batch_size));
+        std::vector<std::vector<float>> expert_outputs{std::move(expert_probabilities)};
+        std::vector<std::vector<float>> routing_weights(
+            static_cast<size_t>(batch_size), std::vector<float>{1.0f});
+        const auto routed_probabilities = route_predictions(expert_outputs, routing_weights);
 
-        const float* inference_logits = static_cast<const float*>(inference_fc_dst.get_data_handle());
         for (size_t sample = 0; sample < current_batch_size; ++sample) {
-            const float confidence = sigmoid(inference_logits[sample]);
+            const float confidence = routed_probabilities[sample];
             if (confidence >= 0.5f) ++human_prediction_count;
             if (displayed_prediction_count < max_displayed_predictions) {
                 std::println("  Sample {}: {} (confidence {:.4f}, label {:.2f})",

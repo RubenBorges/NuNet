@@ -1,9 +1,11 @@
 #include <DataLoader.hpp>
 #include <opencv2/opencv.hpp>
+#include <opencv5/opencv2/core/matx.hpp>
+#include <simdjson.h>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 #include <print>
-#include <simdjson.h>
 #include <random>
 #include <algorithm>
 #include <fstream>
@@ -14,23 +16,21 @@ using namespace bpy;
 using namespace simdjson;
 
     
-    DataLoader::DataLoader(dbglog& log_):log(&log_) {}
+    DataLoader::DataLoader(dbglog& log_):log(&log_) {};
 
-bool DataLoader::save_onednn_model(const std::string& filepath,const std::vector<float>& conv_w, const std::vector<float>& conv_b, const std::vector<float>& fc_w, const std::vector<float>& fc_b) {
-    auto now = std::chrono::system_clock::now();
-    auto current_day = std::chrono::floor<std::chrono::days>(now);
-    std::chrono::hh_mm_ss<std::chrono::nanoseconds> log_time{now - current_day};
+    bool DataLoader::save_onednn_model(const std::string& filepath, const std::vector<float>& conv_w, const std::vector<float>& conv_b, const std::vector<float>& fc_w, const std::vector<float>& fc_b) {
+        auto now = std::chrono::system_clock::now();
+        auto current_day = std::chrono::floor<std::chrono::days>(now);
+        std::chrono::hh_mm_ss<std::chrono::nanoseconds> log_time{now - current_day};
+        std::ofstream out_file(filepath, std::ios::binary | std::ios::trunc);
+        if (!out_file.is_open()) {
+            std::println(std::cerr, "Error: Failed to open model export file path: {}", filepath);
+            (*log)(log_time, dbglog::lvl::ERROR, "Failed to save model.");
 
-    std::ofstream out_file(filepath, std::ios::binary | std::ios::trunc);
-    if (!out_file.is_open()) {
-        std::println(std::cerr, "Error: Failed to open model export file path: {}", filepath);
-        (*log)(log_time, dbglog::lvl::ERROR, "Failed to save model.");
+            return false;
+        }
 
-        return false;
-    }
-
-    auto write_vector = [&](const std::vector<float>& vec) {
-        size_t size = vec.size();
+        auto write_vector = [&](const std::vector<float>& vec) {size_t size = vec.size();
         out_file.write(reinterpret_cast<const char*>(&size), sizeof(size));
         out_file.write(reinterpret_cast<const char*>(vec.data()), size * sizeof(float));
     };
@@ -153,6 +153,11 @@ bool DataLoader::load_images_from_directory(std::vector<float>& data_buffer, std
         
         // 1. Read image via OpenCV in Grayscale mode (1 channel)
         cv::Mat img = cv::imread(path, cv::IMREAD_GRAYSCALE);
+        
+        nativeResolution.rows     = img.rows;
+        nativeResolution.columns  = img.cols;
+        nativeResolution.channels = channels;
+
         if (img.empty()) {
             std::println("Skipping invalid image file: {}", path);
             continue; 
