@@ -1,65 +1,87 @@
 #pragma once
 
-#include <vector>
-#include <functional>
 #include <cstddef>
-#include <compare>
-#include <random>
+#include <functional>
+#include <vector>
+
 namespace bpy {
 
 class Matrix {
 private:
-    std::size_t rows;
-    std::size_t cols;
-    std::vector<double> data;
+    std::size_t rows_;
+    std::size_t cols_;
+    std::vector<double> data_;
 
 public:
-    Matrix(std::size_t rows, std::size_t cols, double initValue = 0.0);
+    Matrix(
+        std::size_t rows,
+        std::size_t cols,
+        double init_value = 0.0);
+
     ~Matrix() = default;
 
-    // Element Access
-    double&       operator()  (std::size_t r, std::size_t c);
-    const double& operator()  (std::size_t r, std::size_t c) const;
+    double& operator()(
+        std::size_t row,
+        std::size_t col) noexcept;
 
-    // Compound Operators (In-place, Zero-allocation)
+    const double& operator()(
+        std::size_t row,
+        std::size_t col) const noexcept;
+
     Matrix& operator+=(const Matrix& other);
 
-    // Standard Binary Operators (Leverage compound operators internally)
+    Matrix operator+(const Matrix& other) const;
+
     Matrix operator*(const Matrix& other) const;
-    Matrix operator+(const Matrix& other) const {
-        Matrix result = *this;
-        result += other;
-        return result;
+
+    void map_inplace(
+        const std::function<double(double)>& function);
+
+    Matrix map(
+        const std::function<double(double)>& function) const;
+
+    static void multiply_to(
+        const Matrix& A,
+        const Matrix& B,
+        Matrix& C);
+
+    static Matrix dense(
+        const Matrix& input,
+        const Matrix& weights,
+        const Matrix& bias);
+
+    void randomize(
+        double min = -1.0,
+        double max = 1.0);
+
+    [[nodiscard]]
+    std::size_t Rows() const noexcept {
+        return rows_;
     }
-    
-    auto operator<=> (const Matrix& other) const = default;
-    
-    void randomize(double min = -1.0, double max = 1.0);
-    
-    // In-place structural mutations
-    void map_inplace(const std::function<double(double)>& func);
-    Matrix map(const std::function<double(double)>& func) const;
 
-    // High Performance Dense evaluation (Bypasses intermediate heap generation)
-    static void multiply_to(const Matrix& A, const Matrix& B, Matrix& C);
-    static Matrix dense(const Matrix& input, const Matrix& weights, const Matrix& bias);
-    
-    std::size_t Rows() const { return rows; }
-    std::size_t Cols() const { return cols; }
+    [[nodiscard]]
+    std::size_t Cols() const noexcept {
+        return cols_;
+    }
 
+    [[nodiscard]]
+    std::size_t Size() const noexcept {
+        return data_.size();
+    }
 
-    double get(int r, int c) const;
-    void set(int r, int c, double val);
+    double get(
+        std::size_t row,
+        std::size_t col) const noexcept;
+
+    void set(
+        std::size_t row,
+        std::size_t col,
+        double value) noexcept;
 
     void print() const;
 
-    // Helper to fill a matrix with random weights between -0.5 and 0.5
-    static void randomize_matrix(Matrix& m) {
-        for (auto& val : m.data) {
-            val = ((double)rand() / RAND_MAX) - 0.5;
-        }
-    }
+    static void randomize_matrix(
+        Matrix& matrix);
 };
 
 } // namespace bpy
-

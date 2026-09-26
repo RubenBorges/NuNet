@@ -2,10 +2,17 @@
 set(SOURCES
     Matrix.cpp
     DenseLayer.cpp
+    Tensor.cpp
+    Conv2D.cpp
+    CNN.cpp
 )
 set(HEADERPATHS
     include/Matrix.hpp
     include/DenseLayer.hpp
+    include/Tensor.hpp
+    include/Conv2D.hpp
+    include/CNN.hpp
+
 )
 
 # add_executable(NuNet NuNet.cpp
@@ -13,7 +20,7 @@ set(HEADERPATHS
 #     ${HEADERPATHS}
 # )
 
-add_executable(NuNet Conv_NuNet.cpp 
+add_executable(NuNet ConvNuNet.cpp 
     ${SOURCES} 
     ${HEADERPATHS}
 )

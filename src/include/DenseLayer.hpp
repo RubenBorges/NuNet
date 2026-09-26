@@ -1,35 +1,71 @@
 #pragma once
 
 #include <Matrix.hpp>
-#include <functional>
+
 #include <cstddef>
+#include <functional>
 #include <string>
+
 namespace bpy {
 
 class DenseLayer {
-    Matrix weights;
-    Matrix biases;
-    std::function<double(double)> activation;
+private:
+    Matrix weights_;
+    Matrix biases_;
+
+    std::function<double(double)> activation_;
 
 public:
-    // Configures a single neural layer mapping input dimensions to output neurons
-    DenseLayer(std::size_t input_size, std::size_t output_size, std::function<double(double)> act_func);
+    DenseLayer(
+        std::size_t input_size,
+        std::size_t output_size,
+        std::function<double(double)> activation);
+
     ~DenseLayer() = default;
 
-    // Evaluates a layer forward pass: Activation((Inputs * Weights) + Biases)
+    DenseLayer(const DenseLayer&) = default;
+    DenseLayer(DenseLayer&&) noexcept = default;
+
+    DenseLayer& operator=(const DenseLayer&) = default;
+    DenseLayer& operator=(DenseLayer&&) noexcept = default;
+
+    [[nodiscard]]
     Matrix forward(const Matrix& inputs) const;
-    
-    //Tuning
-    void remanufacture_weights(double min = -1.0, double max = 1.0);
-    void remanufacture_weights_he(std::size_t input_size);
 
-    //Persistence
-    void save_to_csv(const std::string& weights_filename, const std::string& biases_filename) const;
-    void load_from_csv(const std::string& weights_filename, const std::string& biases_filename);
+    void randomize(
+        double min = -1.0,
+        double max = 1.0);
 
-    // Optional utility getters to view inner layer metrics or states
-    const Matrix& GetWeights() const;
-    const Matrix& GetBiases() const;
+    void initialize_he(
+        std::size_t input_size);
+
+    void save_to_csv(
+        const std::string& weights_filename,
+        const std::string& biases_filename) const;
+
+    void load_from_csv(
+        const std::string& weights_filename,
+        const std::string& biases_filename);
+
+    [[nodiscard]]
+    const Matrix& GetWeights() const noexcept {
+        return weights_;
+    }
+
+    [[nodiscard]]
+    const Matrix& GetBiases() const noexcept {
+        return biases_;
+    }
+
+    [[nodiscard]]
+    std::size_t InputSize() const noexcept {
+        return weights_.Rows();
+    }
+
+    [[nodiscard]]
+    std::size_t OutputSize() const noexcept {
+        return weights_.Cols();
+    }
 };
 
 } // namespace bpy

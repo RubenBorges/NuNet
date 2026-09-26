@@ -1,121 +1,256 @@
-#include <random>
-#include <stdexcept>
-#include <algorithm>
-#include <iostream>
 #include <Matrix.hpp>
 
-namespace bpy {
+#include <algorithm>
+#include <iostream>
+#include <random>
+#include <stdexcept>
 
-Matrix::Matrix(std::size_t rows, std::size_t cols, double initValue): rows(rows), cols(cols), data(rows * cols, initValue) {}
-
-double& Matrix::operator()(std::size_t r, std::size_t c) {
-    return data[r * cols + c];
-}
-
-const double& Matrix::operator()(std::size_t r, std::size_t c) const {
-    return data[r * cols + c];
-}
-
-// In-place addition: loops contiguously over flat memory without resizing
-Matrix& Matrix::operator+=(const Matrix& other) {
-    if (rows != other.rows || cols != other.cols) {
-        throw std::invalid_argument("Matrix dimensions must match for operator+=");
+namespace bpy
+{
+    Matrix::Matrix(
+        std::size_t rows,
+        std::size_t cols,
+        double init_value
+    )
+        : rows_{rows},
+          cols_{cols},
+          data_(rows * cols, init_value)
+    {
     }
-    for (std::size_t i = 0; i < data.size(); ++i) {
-        data[i] += other.data[i];
-    }
-    return *this;
-}
 
-// CACHE-OPTIMIZED multiplication engine (Row-K-Col loop nesting)
-void Matrix::multiply_to(const Matrix& A, const Matrix& B, Matrix& C) {
-    if (A.cols != B.rows || A.rows != C.rows || B.cols != C.cols) {
-        throw std::invalid_argument("Matrix dimension mismatch in multiply_to target initialization");
+    double& Matrix::operator()(
+        std::size_t row,
+        std::size_t col
+    ) noexcept
+    {
+        return data_[row * cols_ + col];
     }
-    
-    // Clear destination buffer
-    std::fill(C.data.begin(), C.data.end(), 0.0);
 
-    // Row-K-Col traversal allows the inner loop to stream contiguously 
-    // across both Matrix B and Matrix C memory rows.
-    for (std::size_t r = 0; r < A.rows; ++r) {
-        for (std::size_t k = 0; k < A.cols; ++k) {
-            double a_val = A(r, k); // Cache the single value from A
-            
-            // Inner loop now iterates over columns linearly (Contiguous memory access)
-            for (std::size_t c = 0; c < B.cols; ++c) {
-                C(r, c) += a_val * B(k, c);
+    const double& Matrix::operator()(
+        std::size_t row,
+        std::size_t col
+    ) const noexcept
+    {
+        return data_[row * cols_ + col];
+    }
+
+    double Matrix::get(
+        std::size_t row,
+        std::size_t col
+    ) const noexcept
+    {
+        return data_[row * cols_ + col];
+    }
+
+    void Matrix::set(
+        std::size_t row,
+        std::size_t col,
+        double value
+    ) noexcept
+    {
+        data_[row * cols_ + col] = value;
+    }
+
+    Matrix& Matrix::operator+=(const Matrix& other)
+    {
+        if (rows_ != other.rows_ || cols_ != other.cols_)
+        {
+            throw std::invalid_argument(
+                "Matrix dimensions must match for operator+="
+            );
+        }
+
+        for (std::size_t i{0}; i < data_.size(); ++i)
+        {
+            data_[i] += other.data_[i];
+        }
+
+        return *this;
+    }
+
+    Matrix Matrix::operator+(const Matrix& other) const
+    {
+        Matrix result{*this};
+        result += other;
+        return result;
+    }
+
+    void Matrix::multiply_to(
+        const Matrix& a,
+        const Matrix& b,
+        Matrix& destination
+    )
+    {
+        if (a.cols_ != b.rows_)
+        {
+            throw std::invalid_argument(
+                "Matrix multiplication dimension mismatch"
+            );
+        }
+
+        if (
+            destination.rows_ != a.rows_ ||
+            destination.cols_ != b.cols_
+        )
+        {
+            throw std::invalid_argument(
+                "Matrix multiplication destination dimensions mismatch"
+            );
+        }
+
+        std::fill(
+            destination.data_.begin(),
+            destination.data_.end(),
+            0.0
+        );
+
+        // i-k-j is considerably more cache friendly than
+        // the traditional i-j-k arrangement.
+        for (std::size_t i{0}; i < a.rows_; ++i)
+        {
+            for (std::size_t k{0}; k < a.cols_; ++k)
+            {
+                const double a_value = a(i, k);
+
+                const double* b_row =
+                    &b(k, 0);
+
+                double* output_row =
+                    &destination(i, 0);
+
+                for (std::size_t j{0}; j < b.cols_; ++j)
+                {
+                    output_row[j] +=
+                        a_value * b_row[j];
+                }
             }
         }
     }
-}
 
-Matrix Matrix::operator*(const Matrix& other) const {
-    Matrix result(rows, other.cols);
-    multiply_to(*this, other, result);
-    return result;
-}
+    Matrix Matrix::operator*(const Matrix& other) const
+    {
+        Matrix result{
+            rows_,
+            other.cols_
+        };
 
-// Mutates values directly within the current instance, avoiding memory copying
-void Matrix::map_inplace(const std::function<double(double)>& func) {
-    for (auto& val : data) {
-        val = func(val);
-    }
-}
+        multiply_to(
+            *this,
+            other,
+            result
+        );
 
-Matrix Matrix::map(const std::function<double(double)>& func) const {
-    Matrix result = *this;
-    result.map_inplace(func);
-    return result;
-}
-
-// HIGH-PERFORMANCE + BROADCAST AWARE Dense evaluation
-Matrix Matrix::dense(const Matrix& input, const Matrix& weights, const Matrix& bias) {
-    if (bias.Rows() != 1 || bias.Cols() != weights.Cols()) {
-        throw std::invalid_argument("Bias must be a row vector matching weights' output columns [1 x weights.cols]");
+        return result;
     }
 
-    Matrix destination(input.rows, weights.cols);
-    
-    // 1. Perform optimized matrix multiplication
-    multiply_to(input, weights, destination);
-    
-    // 2. Broadcast the bias row to EVERY sample row in the batch matrix
-    for (std::size_t r = 0; r < destination.rows; ++r) {
-        for (std::size_t c = 0; c < destination.cols; ++c) {
-            destination(r, c) += bias(0, c);
+    Matrix Matrix::dense(
+        const Matrix& input,
+        const Matrix& weights,
+        const Matrix& bias
+    )
+    {
+        if (input.cols_ != weights.rows_)
+        {
+            throw std::invalid_argument(
+                "Dense layer input dimension mismatch"
+            );
+        }
+
+        if (
+            bias.rows_ != 1 ||
+            bias.cols_ != weights.cols_
+        )
+        {
+            throw std::invalid_argument(
+                "Dense bias must be [1 x output_size]"
+            );
+        }
+
+        Matrix output{
+            input.rows_,
+            weights.cols_
+        };
+
+        multiply_to(
+            input,
+            weights,
+            output
+        );
+
+        // Broadcast bias across every batch row.
+        for (std::size_t r{0}; r < output.rows_; ++r)
+        {
+            double* output_row = &output(r, 0);
+
+            for (std::size_t c{0}; c < output.cols_; ++c)
+            {
+                output_row[c] += bias(0, c);
+            }
+        }
+
+        return output;
+    }
+
+    void Matrix::map_inplace(
+        const std::function<double(double)>& function
+    )
+    {
+        for (double& value : data_)
+        {
+            value = function(value);
         }
     }
-    
-    return destination; // Returned via RVO
-}
 
-// Optimized randomize: Thread-safe, persisting engine via static thread_local
-void Matrix::randomize(double min, double max) {
-    if (min >= max) {
-        throw std::invalid_argument("Min value must be less than max value.");
+    Matrix Matrix::map(
+        const std::function<double(double)>& function
+    ) const
+    {
+        Matrix result{*this};
+        result.map_inplace(function);
+        return result;
     }
-    // Static thread_local avoids recreating the random engine infrastructure on every function call
-    static thread_local std::random_device rd;
-    static thread_local std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dis(min, max);
-    
-    for (auto& val : data) { 
-        val = dis(gen); 
+
+    void Matrix::randomize(
+        double min,
+        double max
+    )
+    {
+        if (min >= max)
+        {
+            throw std::invalid_argument(
+                "Randomization minimum must be less than maximum"
+            );
+        }
+
+        static thread_local std::mt19937 engine{
+            std::random_device{}()
+        };
+
+        std::uniform_real_distribution<double> distribution{
+            min,
+            max
+        };
+
+        for (double& value : data_)
+        {
+            value = distribution(engine);
+        }
+    }
+
+    void Matrix::print() const
+    {
+        for (std::size_t r{0}; r < rows_; ++r)
+        {
+            std::cout << "[ ";
+
+            for (std::size_t c{0}; c < cols_; ++c)
+            {
+                std::cout << (*this)(r, c) << ' ';
+            }
+
+            std::cout << "]\n";
+        }
+
+        std::cout << '\n';
     }
 }
-
-void Matrix::print() const {
-    for (std::size_t r = 0; r < rows; ++r) {
-        std::cout << "[ ";
-        for (std::size_t c = 0; c < cols; ++c) { std::cout << (*this)(r, c) << " "; }
-        std::cout << "]\n";
-    }
-    std::cout << "\n";
-}
-
-double Matrix::get(int r, int c) const { return data[r * cols + c]; }
-
-void Matrix::set(int r, int c, double val) { data[r * cols + c] = val; }
-
-} // namespace bpy
