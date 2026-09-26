@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/boopy/dev/Projects/NeuralNetwork/build/cmake_install.cmake",
-		"/home/boopy/dev/Projects/NeuralNetwork/build/src/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
