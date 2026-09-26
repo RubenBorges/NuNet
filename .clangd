@@ -1,0 +1,10 @@
+CompileFlags:
+  Add:
+    - -I/home/boopy/dev/Projects/NeuralNetwork
+    - -I/usr/include
+    - -I/usr/local/include
+    - -I/src/include
+    - -L/usr/lib
+    - -std=c++26
+  CompilationDatabase: build
+
