@@ -9,6 +9,9 @@ set(NNT_SOURCES
 
 set(ODNNT_SOURCES
     OneDNNet/OneDNNet.cpp
+    OneDNNet/debug.cpp
+    OneDNNet/DataLoader.cpp
+
 )
 
 set(HEADERPATHS
@@ -16,6 +19,9 @@ set(HEADERPATHS
     include/DenseLayer.hpp
     include/Tensor.hpp
     include/Conv2D.hpp
+    include/DataLoader.hpp
+    include/simdjson.h
+    include/debug.hpp
 )
 
 # Initialize Binary Executable Target
@@ -29,7 +35,7 @@ target_include_directories(NuNet PRIVATE
 # Standard dependencies lookup
 find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc highgui)
 find_package(TBB REQUIRED COMPONENTS tbb)
-
+find_package(SIMDJSON REQUIRED)
 # Robust lower-case oneDNN finding wrapper
 if(NOT TARGET DNNL::dnnl)
     find_package(dnnl QUIET)
@@ -38,8 +44,14 @@ if(NOT TARGET DNNL::dnnl)
     endif()
 endif()
 
+get_target_property(DNNL_INCLUDE_DIRS DNNL::dnnl INTERFACE_INCLUDE_DIRECTORIES)
+target_include_directories(NuNet SYSTEM PRIVATE ${DNNL_INCLUDE_DIRS})
+
 # Link dependencies using standard lowercase DNNL::dnnl target mapping
-target_link_libraries(NuNet PRIVATE TBB::tbb DNNL::dnnl ${OpenCV_LIBS})
+target_link_libraries(NuNet PRIVATE TBB::tbb DNNL::dnnl simdjson ${OpenCV_LIBS})
+
+set_property(TARGET NuNet PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:DNNL::dnnl>")
+set_property(TARGET NuNet PROPERTY INSTALL_RPATH "$<TARGET_FILE_DIR:DNNL::dnnl>")
 
 # Global Compiler options 
 target_compile_options(NuNet PRIVATE -O3 -Wall -Wextra -march=native)
