@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Execution.hpp>
+
 #include <cstddef>
 #include <vector>
 #include <stdexcept>
@@ -71,22 +73,48 @@ public:
         double max = 1.0);
 
     [[nodiscard]]
-    Tensor3D relu() const;
+    Tensor3D relu(
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
+    Sender<Tensor3D> relu_async(
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
 
     [[nodiscard]]
     Tensor3D max_pool(
         std::size_t pool_size,
-        std::size_t stride) const;
+        std::size_t stride,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
 
     [[nodiscard]]
-    std::vector<double> flatten() const;
+    Sender<Tensor3D> max_pool_async(
+        std::size_t pool_size,
+        std::size_t stride,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
+    std::vector<double> flatten(
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
+    Sender<std::vector<double>> flatten_async(
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
 
     [[nodiscard]]
     Tensor3D convolve(
         const Tensor3D& kernels,
         const std::vector<double>& biases,
         std::size_t stride = 1,
-        std::size_t padding = 0) const;
+        std::size_t padding = 0,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
+    Sender<Tensor3D> convolve_async(
+        const Tensor3D& kernels,
+        const std::vector<double>& biases,
+        std::size_t stride = 1,
+        std::size_t padding = 0,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
 };
 
 } // namespace bpy

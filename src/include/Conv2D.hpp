@@ -31,7 +31,14 @@ public:
     ~Conv2D() = default;
 
     [[nodiscard]]
-    Tensor3D forward(const Tensor3D& input) const;
+    Tensor3D forward(
+        const Tensor3D& input,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
+    Sender<Tensor3D> forward_async(
+        const Tensor3D& input,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
 
     void randomize();
 

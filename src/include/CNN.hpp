@@ -36,6 +36,11 @@ public:
     double predict(const Tensor3D& input) const;
 
     [[nodiscard]]
+    Sender<double> predict_async(
+        const Tensor3D& input,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
     Tensor3D convolution_features(
         const Tensor3D& input) const;
 

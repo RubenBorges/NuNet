@@ -42,7 +42,9 @@ void DenseLayer::randomize()
         biases_(0, c) = 0.0;
 }
 
-Matrix DenseLayer::forward(const Matrix& input) const
+Matrix DenseLayer::forward(
+    const Matrix& input,
+    ExecutionPolicy policy) const
 {
     if (input.Cols() != weights_.Rows())
     {
@@ -54,11 +56,24 @@ Matrix DenseLayer::forward(const Matrix& input) const
         Matrix::dense(
             input,
             weights_,
-            biases_);
+            biases_,
+            policy);
 
-    output.map_inplace(activation_);
+    output.map_inplace(activation_, policy);
 
     return output;
+}
+
+Sender<Matrix> DenseLayer::forward_async(
+    const Matrix& input,
+    ExecutionPolicy policy) const
+{
+    DenseLayer layer{*this};
+    Matrix input_copy{input};
+    return Sender<Matrix>::submit(
+        [layer = std::move(layer), input = std::move(input_copy), policy] {
+            return layer.forward(input, policy);
+        });
 }
 
 void DenseLayer::save(std::ostream& stream) const

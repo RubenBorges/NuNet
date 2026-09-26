@@ -5,6 +5,8 @@ project(NuNet CXX)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(NUNET_ENABLE_SYCL "Build optional SYCL GPU execution kernels" OFF)
+
 # Process the source subdirectory first
 add_subdirectory(src)
 

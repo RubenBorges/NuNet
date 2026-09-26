@@ -42,5 +42,29 @@ target_include_directories(NuNet PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+find_package(TBB REQUIRED COMPONENTS tbb)
+target_link_libraries(NuNet PRIVATE TBB::tbb)
+
+if(NUNET_ENABLE_SYCL)
+    include(CheckCXXCompilerFlag)
+    include(CheckIncludeFileCXX)
+
+    check_cxx_compiler_flag("-fsycl" NUNET_COMPILER_HAS_FSYCL)
+    if(NOT NUNET_COMPILER_HAS_FSYCL)
+        message(FATAL_ERROR "NUNET_ENABLE_SYCL requires a compiler supporting -fsycl")
+    endif()
+
+    set(CMAKE_REQUIRED_FLAGS "-fsycl")
+    check_include_file_cxx("sycl/sycl.hpp" NUNET_HAS_SYCL_HEADER)
+    unset(CMAKE_REQUIRED_FLAGS)
+    if(NOT NUNET_HAS_SYCL_HEADER)
+        message(FATAL_ERROR "NUNET_ENABLE_SYCL requires sycl/sycl.hpp")
+    endif()
+
+    target_compile_definitions(NuNet PRIVATE NUNET_ENABLE_SYCL=1)
+    target_compile_options(NuNet PRIVATE -fsycl)
+    target_link_options(NuNet PRIVATE -fsycl)
+endif()
+
 # Compiler optimizations
 target_compile_options(NuNet PRIVATE -O3 -Wall -Wextra -march=native)

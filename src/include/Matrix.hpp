@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Execution.hpp>
+
 #include <cstddef>
 #include <functional>
 #include <vector>
@@ -39,7 +41,8 @@ public:
     Matrix operator*(const Matrix& other) const;
 
     void map_inplace(
-        const std::function<double(double)>& function);
+        const std::function<double(double)>& function,
+        ExecutionPolicy policy = ExecutionPolicy::CPU);
 
     Matrix map(
         const std::function<double(double)>& function) const;
@@ -47,12 +50,14 @@ public:
     static void multiply_to(
         const Matrix& A,
         const Matrix& B,
-        Matrix& C);
+        Matrix& C,
+        ExecutionPolicy policy = ExecutionPolicy::CPU);
 
     static Matrix dense(
         const Matrix& input,
         const Matrix& weights,
-        const Matrix& bias);
+        const Matrix& bias,
+        ExecutionPolicy policy = ExecutionPolicy::CPU);
 
     void randomize(
         double min = -1.0,

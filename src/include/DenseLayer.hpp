@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Execution.hpp>
 #include <Matrix.hpp>
 
 #include <cstddef>
@@ -19,7 +20,14 @@ public:
         Activation activation);
 
     [[nodiscard]]
-    Matrix forward(const Matrix& input) const;
+    Matrix forward(
+        const Matrix& input,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+
+    [[nodiscard]]
+    Sender<Matrix> forward_async(
+        const Matrix& input,
+        ExecutionPolicy policy = ExecutionPolicy::CPU) const;
 
     void randomize();
 

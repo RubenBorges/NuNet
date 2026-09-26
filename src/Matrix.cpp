@@ -2,9 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <execution>
 #include <iostream>
+#include <numeric>
 #include <random>
 #include <stdexcept>
+
+#if defined(NUNET_ENABLE_SYCL)
+#include <sycl/sycl.hpp>
+#endif
 
 namespace bpy {
 
@@ -40,13 +46,62 @@ Matrix Matrix::operator+(const Matrix &other) const {
   return result;
 }
 
-void Matrix::multiply_to(const Matrix &A, const Matrix &B, Matrix &C) {
+void Matrix::multiply_to(
+  const Matrix &A,
+  const Matrix &B,
+  Matrix &C,
+  ExecutionPolicy policy) {
   if (A.cols_ != B.rows_ || C.rows_ != A.rows_ || C.cols_ != B.cols_) {
     throw std::invalid_argument(
         "Matrix dimensions incompatible for multiplication");
   }
 
   std::fill(C.data_.begin(), C.data_.end(), 0.0);
+
+#if defined(NUNET_ENABLE_SYCL)
+  if (policy == ExecutionPolicy::SYCLGPU) {
+    std::vector<double> left{A.data_};
+    std::vector<double> right{B.data_};
+    sycl::queue queue{sycl::gpu_selector_v};
+    sycl::buffer<double, 1> left_buffer{
+        left.data(), sycl::range<1>{left.size()}};
+    sycl::buffer<double, 1> right_buffer{
+        right.data(), sycl::range<1>{right.size()}};
+    sycl::buffer<double, 1> output_buffer{
+        sycl::range<1>{C.data_.size()}};
+    const std::size_t left_rows = A.rows_;
+    const std::size_t inner_size = A.cols_;
+    const std::size_t output_cols = B.cols_;
+
+    queue.submit([&](sycl::handler &handler) {
+      auto left_values =
+          left_buffer.get_access<sycl::access::mode::read>(handler);
+      auto right_values =
+          right_buffer.get_access<sycl::access::mode::read>(handler);
+      auto output_values =
+          output_buffer.get_access<sycl::access::mode::write>(handler);
+      handler.parallel_for(sycl::range<1>{C.data_.size()}, [=](sycl::id<1> id) {
+        const std::size_t output_index = id[0];
+        const std::size_t row = output_index / output_cols;
+        const std::size_t col = output_index % output_cols;
+        double sum = 0.0;
+        for (std::size_t inner = 0; inner < inner_size; ++inner)
+          sum += left_values[row * inner_size + inner]
+              * right_values[inner * output_cols + col];
+        output_values[output_index] = sum;
+      });
+    });
+    queue.wait_and_throw();
+
+    sycl::host_accessor output_values{output_buffer, sycl::read_only};
+    for (std::size_t index = 0; index < C.data_.size(); ++index)
+      C.data_[index] = output_values[index];
+    return;
+  }
+#else
+  if (policy == ExecutionPolicy::SYCLGPU)
+    throw std::runtime_error("NuNet was built without SYCL support");
+#endif
 
   /*
       i-k-j ordering.
@@ -55,19 +110,28 @@ void Matrix::multiply_to(const Matrix &A, const Matrix &B, Matrix &C) {
       matrices because B[k][j] and C[i][j] are contiguous.
   */
 
-  for (std::size_t i = 0; i < A.rows_; ++i) {
-    const std::size_t a_base = i * A.cols_;
-    const std::size_t c_base = i * C.cols_;
+  const auto multiply_row = [&](std::size_t row) {
+    const std::size_t left_base = row * A.cols_;
+    const std::size_t output_base = row * C.cols_;
 
-    for (std::size_t k = 0; k < A.cols_; ++k) {
-      const double a = A.data_[a_base + k];
-
-      const std::size_t b_base = k * B.cols_;
-
-      for (std::size_t j = 0; j < B.cols_; ++j) {
-        C.data_[c_base + j] += a * B.data_[b_base + j];
-      }
+    for (std::size_t inner = 0; inner < A.cols_; ++inner) {
+      bpy::detail::simd_multiply_add(
+          C.data_.data() + output_base,
+          B.data_.data() + inner * B.cols_,
+          A.data_[left_base + inner],
+          B.cols_);
     }
+  };
+
+  if (policy == ExecutionPolicy::ParallelCPU) {
+    std::vector<std::size_t> rows(A.rows_);
+    std::iota(rows.begin(), rows.end(), std::size_t{0});
+    std::for_each(
+        std::execution::par_unseq,
+        rows.begin(), rows.end(), multiply_row);
+  } else {
+    for (std::size_t row = 0; row < A.rows_; ++row)
+      multiply_row(row);
   }
 }
 
@@ -79,9 +143,18 @@ Matrix Matrix::operator*(const Matrix &other) const {
   return result;
 }
 
-void Matrix::map_inplace(const std::function<double(double)> &function) {
-  for (double &value : data_)
-    value = function(value);
+void Matrix::map_inplace(
+    const std::function<double(double)> &function,
+    ExecutionPolicy policy) {
+  if (policy == ExecutionPolicy::ParallelCPU) {
+    std::for_each(
+        std::execution::par_unseq,
+        data_.begin(), data_.end(),
+        [&](double &value) { value = function(value); });
+  } else {
+    for (double &value : data_)
+      value = function(value);
+  }
 }
 
 Matrix Matrix::map(const std::function<double(double)> &function) const {
@@ -91,7 +164,7 @@ Matrix Matrix::map(const std::function<double(double)> &function) const {
 }
 
 Matrix Matrix::dense(const Matrix &input, const Matrix &weights,
-                     const Matrix &bias) {
+                     const Matrix &bias, ExecutionPolicy policy) {
   if (input.cols_ != weights.rows_)
     throw std::invalid_argument("Dense input/weight dimensions do not match");
 
@@ -101,15 +174,21 @@ Matrix Matrix::dense(const Matrix &input, const Matrix &weights,
 
   Matrix result{input.rows_, weights.cols_};
 
-  multiply_to(input, weights, result);
+  multiply_to(input, weights, result, policy);
 
-  for (std::size_t r = 0; r < result.rows_; ++r) {
-    const std::size_t base = r * result.cols_;
+  const auto add_bias = [&](double &value) {
+    const std::size_t index =
+        static_cast<std::size_t>(&value - result.data_.data());
+    value += bias.data_[index % result.cols_];
+  };
 
-    for (std::size_t c = 0; c < result.cols_; ++c) {
-      result.data_[base + c] += bias.data_[c];
-    }
-  }
+  if (policy == ExecutionPolicy::ParallelCPU)
+    std::for_each(
+        std::execution::par_unseq,
+        result.data_.begin(), result.data_.end(), add_bias);
+  else
+    for (double &value : result.data_)
+      add_bias(value);
 
   return result;
 }
@@ -129,9 +208,7 @@ void Matrix::randomize(double min, double max) {
 
 Matrix Matrix::relu() const {
   Matrix result{*this};
-
-  for (double &value : result.data_)
-    value = std::max(0.0, value);
+  bpy::detail::simd_relu(data_.data(), result.data_.data(), data_.size());
 
   return result;
 }

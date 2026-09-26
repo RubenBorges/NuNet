@@ -65,7 +65,9 @@ void Conv2D::randomize()
         0.0);
 }
 
-Tensor3D Conv2D::forward(const Tensor3D& input) const
+Tensor3D Conv2D::forward(
+    const Tensor3D& input,
+    ExecutionPolicy policy) const
 {
     if (input.Channels() != input_channels_)
     {
@@ -82,7 +84,27 @@ Tensor3D Conv2D::forward(const Tensor3D& input) const
         weights_,
         biases_,
         stride_,
-        padding);
+        padding,
+        policy);
+}
+
+Sender<Tensor3D> Conv2D::forward_async(
+    const Tensor3D& input,
+    ExecutionPolicy policy) const
+{
+    if (input.Channels() != input_channels_)
+    {
+        throw std::invalid_argument(
+            "Conv2D input channel count does not match layer");
+    }
+
+    const std::size_t padding =
+        padding_ == Padding::Same
+            ? kernel_size_ / 2
+            : 0;
+
+    return input.convolve_async(
+        weights_, biases_, stride_, padding, policy);
 }
 
 void Conv2D::save(std::ostream& stream) const

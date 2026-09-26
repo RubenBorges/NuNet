@@ -225,6 +225,57 @@ double CNN::predict(
     return output(0, 0);
 }
 
+Sender<double> CNN::predict_async(
+    const Tensor3D& input,
+    ExecutionPolicy policy) const
+{
+    validate_input(input);
+
+    auto convolution =
+        Sender<Tensor3D>::just(input).let_value(
+            [layer = convolution_, policy](Tensor3D image) {
+                return layer.forward_async(image, policy);
+            });
+
+    auto pooled =
+        std::move(convolution).let_value(
+            [pool_size = config_.pool_size,
+             pool_stride = config_.pool_stride,
+             policy](Tensor3D features) {
+                return features.max_pool_async(
+                    pool_size, pool_stride, policy);
+            });
+
+    auto flattened =
+        std::move(pooled).let_value(
+            [policy](Tensor3D features) {
+                return features.flatten_async(policy);
+            });
+
+    auto dense_input =
+        std::move(flattened).then(
+            [](std::vector<double> values) {
+                Matrix matrix{1, values.size()};
+                std::copy(values.begin(), values.end(), matrix.Data());
+                return matrix;
+            });
+
+    auto hidden =
+        std::move(dense_input).let_value(
+            [layer = hidden_, policy](Matrix values) {
+                return layer.forward_async(values, policy);
+            });
+
+    auto output =
+        std::move(hidden).let_value(
+            [layer = output_, policy](Matrix values) {
+                return layer.forward_async(values, policy);
+            });
+
+    return std::move(output).then(
+        [](Matrix probabilities) { return probabilities(0, 0); });
+}
+
 void CNN::randomize()
 {
     convolution_.randomize();
