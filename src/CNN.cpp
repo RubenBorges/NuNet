@@ -283,260 +283,122 @@ void CNN::randomize()
     output_.randomize();
 }
 
-void CNN::save(
-    const std::filesystem::path& filename) const
-{
-    std::ofstream stream{
-        filename,
-        std::ios::binary
-    };
+void CNN::save(const std::filesystem::path& filename) const {
+    std::ofstream stream{filename, std::ios::binary};
+    if (!stream) {
+        throw std::runtime_error("Could not open model for writing: " + filename.string());
+    }
 
-    if (!stream)
-        throw std::runtime_error(
-            "Could not open model for writing: " +
-            filename.string());
+    // 1. Write File Metadata Identifiers
+    stream.write(reinterpret_cast<const char*>(&MODEL_MAGIC), sizeof(MODEL_MAGIC));
+    stream.write(reinterpret_cast<const char*>(&MODEL_VERSION), sizeof(MODEL_VERSION));
 
-    stream.write(
-        reinterpret_cast<const char*>(&MODEL_MAGIC),
-        sizeof(MODEL_MAGIC));
+    // 2. Normalize and Write Runtime Geometry Footprint
+    const auto input_rows = static_cast<std::uint64_t>(input_rows_);
+    const auto input_cols = static_cast<std::uint64_t>(input_cols_);
+    stream.write(reinterpret_cast<const char*>(&input_rows), sizeof(input_rows));
+    stream.write(reinterpret_cast<const char*>(&input_cols), sizeof(input_cols));
 
-    stream.write(
-        reinterpret_cast<const char*>(&MODEL_VERSION),
-        sizeof(MODEL_VERSION));
+    // 3. Serialize Structural Configuration Object Properties
+    const auto input_channels = static_cast<std::uint64_t>(config_.input_channels);
+    const auto filters        = static_cast<std::uint64_t>(config_.filters);
+    const auto kernel_size    = static_cast<std::uint64_t>(config_.kernel_size);
+    const auto conv_stride    = static_cast<std::uint64_t>(config_.convolution_stride);
+    const auto pool_size      = static_cast<std::uint64_t>(config_.pool_size);
+    const auto pool_stride    = static_cast<std::uint64_t>(config_.pool_stride);
+    const auto hidden_size    = static_cast<std::uint64_t>(config_.hidden_size);
+    const auto padding        = static_cast<std::uint8_t>(config_.padding);
 
-    const auto input_rows =
-        static_cast<std::uint64_t>(input_rows_);
+    stream.write(reinterpret_cast<const char*>(&input_channels), sizeof(input_channels));
+    stream.write(reinterpret_cast<const char*>(&filters),        sizeof(filters));
+    stream.write(reinterpret_cast<const char*>(&kernel_size),    sizeof(kernel_size));
+    stream.write(reinterpret_cast<const char*>(&conv_stride),    sizeof(conv_stride));
+    stream.write(reinterpret_cast<const char*>(&pool_size),      sizeof(pool_size));
+    stream.write(reinterpret_cast<const char*>(&pool_stride),    sizeof(pool_stride));
+    stream.write(reinterpret_cast<const char*>(&hidden_size),    sizeof(hidden_size));
+    stream.write(reinterpret_cast<const char*>(&padding),        sizeof(padding));
 
-    const auto input_cols =
-        static_cast<std::uint64_t>(input_cols_);
-
-    stream.write(
-        reinterpret_cast<const char*>(&input_rows),
-        sizeof(input_rows));
-
-    stream.write(
-        reinterpret_cast<const char*>(&input_cols),
-        sizeof(input_cols));
-
-    const auto input_channels =
-        static_cast<std::uint64_t>(
-            config_.input_channels);
-
-    const auto filters =
-        static_cast<std::uint64_t>(
-            config_.filters);
-
-    const auto kernel_size =
-        static_cast<std::uint64_t>(
-            config_.kernel_size);
-
-    const auto convolution_stride =
-        static_cast<std::uint64_t>(
-            config_.convolution_stride);
-
-    const auto pool_size =
-        static_cast<std::uint64_t>(
-            config_.pool_size);
-
-    const auto pool_stride =
-        static_cast<std::uint64_t>(
-            config_.pool_stride);
-
-    const auto hidden_size =
-        static_cast<std::uint64_t>(
-            config_.hidden_size);
-
-    const auto padding =
-        static_cast<std::uint8_t>(
-            config_.padding);
-
-    stream.write(
-        reinterpret_cast<const char*>(&input_channels),
-        sizeof(input_channels));
-
-    stream.write(
-        reinterpret_cast<const char*>(&filters),
-        sizeof(filters));
-
-    stream.write(
-        reinterpret_cast<const char*>(&kernel_size),
-        sizeof(kernel_size));
-
-    stream.write(
-        reinterpret_cast<const char*>(&convolution_stride),
-        sizeof(convolution_stride));
-
-    stream.write(
-        reinterpret_cast<const char*>(&pool_size),
-        sizeof(pool_size));
-
-    stream.write(
-        reinterpret_cast<const char*>(&pool_stride),
-        sizeof(pool_stride));
-
-    stream.write(
-        reinterpret_cast<const char*>(&hidden_size),
-        sizeof(hidden_size));
-
-    stream.write(
-        reinterpret_cast<const char*>(&padding),
-        sizeof(padding));
-
+    // 4. Serialize Deep Layer Arrays (Weights and Biases)
     convolution_.save(stream);
     hidden_.save(stream);
     output_.save(stream);
 
-    if (!stream)
-        throw std::runtime_error(
-            "Failed while writing model: " +
-            filename.string());
+    if (!stream) {
+        throw std::runtime_error("Failed while writing model data to: " + filename.string());
+    }
 }
 
-CNN CNN::load_model(
-    const std::filesystem::path& filename)
-{
-    std::ifstream stream{
-        filename,
-        std::ios::binary
-    };
+CNN CNN::load_model(const std::filesystem::path& filename) {
+    std::ifstream stream{filename, std::ios::binary};
+    if (!stream) {
+        throw std::runtime_error("Could not open model for reading: " + filename.string());
+    }
 
-    if (!stream)
-        throw std::runtime_error(
-            "Could not open model: " +
-            filename.string());
-
+    // 1. Verify Identifiers
     std::uint64_t magic{};
     std::uint32_t version{};
+    stream.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    stream.read(reinterpret_cast<char*>(&version), sizeof(version));
 
-    stream.read(
-        reinterpret_cast<char*>(&magic),
-        sizeof(magic));
+    if (magic != MODEL_MAGIC)       throw std::runtime_error("Invalid NuNet model file metadata descriptor");
+    if (version != MODEL_VERSION)   throw std::runtime_error("Unsupported NuNet model version");
 
-    stream.read(
-        reinterpret_cast<char*>(&version),
-        sizeof(version));
-
-    if (magic != MODEL_MAGIC)
-        throw std::runtime_error(
-            "Invalid NuNet model file");
-
-    if (version != MODEL_VERSION)
-        throw std::runtime_error(
-            "Unsupported NuNet model version");
-
+    // 2. Parse Raw Resolution Bounds
     std::uint64_t input_rows{};
     std::uint64_t input_cols{};
+    stream.read(reinterpret_cast<char*>(&input_rows), sizeof(input_rows));
+    stream.read(reinterpret_cast<char*>(&input_cols), sizeof(input_cols));
 
-    stream.read(
-        reinterpret_cast<char*>(&input_rows),
-        sizeof(input_rows));
-
-    stream.read(
-        reinterpret_cast<char*>(&input_cols),
-        sizeof(input_cols));
-
+    // 3. Reconstruct Config Object Fields
     Config config{};
-
     std::uint64_t value{};
 
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.input_channels = value;
-
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.filters = value;
-
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.kernel_size = value;
-
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.convolution_stride = value;
-
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.pool_size = value;
-
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.pool_stride = value;
-
-    stream.read(
-        reinterpret_cast<char*>(&value),
-        sizeof(value));
-    config.hidden_size = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.input_channels = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.filters = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.kernel_size = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.convolution_stride = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.pool_size = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.pool_stride = value;
+    stream.read(reinterpret_cast<char*>(&value), sizeof(value)); config.hidden_size = value;
 
     std::uint8_t padding{};
+    stream.read(reinterpret_cast<char*>(&padding), sizeof(padding));
+    config.padding = static_cast<Padding>(padding);
 
-    stream.read(
-        reinterpret_cast<char*>(&padding),
-        sizeof(padding));
+    if (!stream) {
+        throw std::runtime_error("Corrupt NuNet model header structures");
+    }
 
-    config.padding =
-        static_cast<Padding>(padding);
+    // 4. Construct the model instance matching the parsed geometry boundaries
+    CNN model{config, static_cast<std::size_t>(input_rows), static_cast<std::size_t>(input_cols)};
 
-    if (!stream)
-        throw std::runtime_error(
-            "Corrupt NuNet model header");
-
-    CNN model{
-        config,
-        input_rows,
-        input_cols
-    };
-
+    // 5. Stream values directly into memory allocations
     model.convolution_.load(stream);
     model.hidden_.load(stream);
     model.output_.load(stream);
 
+    if (!stream) {
+        throw std::runtime_error("Failed while loading deep network execution arrays from: " + filename.string());
+    }
+
     return model;
 }
 
-void CNN::load(
-    const std::filesystem::path& filename)
-{
-    CNN loaded =
-        load_model(filename);
+void CNN::load(const std::filesystem::path& filename) {
+    // 1. Load the model from disk (parses shapes and weights dynamically)
+    CNN loaded = load_model(filename);
 
-    if (loaded.input_rows_ != input_rows_ ||
-        loaded.input_cols_ != input_cols_ ||
-        loaded.config_.input_channels !=
-            config_.input_channels ||
-        loaded.config_.filters !=
-            config_.filters ||
-        loaded.config_.kernel_size !=
-            config_.kernel_size ||
-        loaded.config_.convolution_stride !=
-            config_.convolution_stride ||
-        loaded.config_.padding !=
-            config_.padding ||
-        loaded.config_.pool_size !=
-            config_.pool_size ||
-        loaded.config_.pool_stride !=
-            config_.pool_stride ||
-        loaded.config_.hidden_size !=
-            config_.hidden_size)
-    {
-        throw std::runtime_error(
-            "Saved model architecture does not match current CNN");
-    }
+    // 2. Overwrite structural configuration tracking variables
+    config_          = loaded.config_;
+    input_rows_      = loaded.input_rows_;
+    input_cols_      = loaded.input_cols_;
+    flattened_size_  = loaded.flattened_size_;
 
-    convolution_ =
-        std::move(loaded.convolution_);
-
-    hidden_ =
-        std::move(loaded.hidden_);
-
-    output_ =
-        std::move(loaded.output_);
+    // 3. Move deep layer data directly into this instance (Zero-Allocation Swap)
+    convolution_     = std::move(loaded.convolution_);
+    hidden_          = std::move(loaded.hidden_);
+    output_          = std::move(loaded.output_);
 }
+
 
 } // namespace bpy

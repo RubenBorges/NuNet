@@ -1,12 +1,17 @@
+#include <Matrix.hpp>
 #include <CNN.hpp>
 #include <Tensor.hpp>
+#include <initializer_list>
+#include <opencv2/opencv.hpp>
 
 #include <cstddef>
 #include <filesystem>
 #include <print>
+#include <stdexcept>
+#include <vector>
 
-using bpy::CNN;
 using bpy::Padding;
+using bpy::CNN;
 using bpy::Tensor3D;
 
 Tensor3D make_thermal_image(std::size_t rows, std::size_t cols, std::size_t channels) {
@@ -73,13 +78,17 @@ int main() {
   // MODEL
   // --------------------------------------------------------
 
-  CNN model{config, input_rows, input_cols};
+  // const Tensor3D thermal_image{"/home/boopy/Pictures/boop.png"};//make_thermal_image(input_rows, input_cols, input_channels)};
+  // CNN model{config, thermal_image.Rows(), thermal_image.Cols()};
 
+  CNN model{config, input_rows, input_cols};
   // --------------------------------------------------------
   // INPUT
   // --------------------------------------------------------
-
+ 
+  // TEST HUMAN IMAGE
   const Tensor3D thermal_image{make_thermal_image(input_rows, input_cols, input_channels)};
+
 
   // --------------------------------------------------------
   // NETWORK INFORMATION
@@ -90,13 +99,9 @@ int main() {
   const auto pooled_features {model.pooled_features(thermal_image)};
 
   std::println("Input:        {} x {} x {}", thermal_image.Rows(), thermal_image.Cols(), thermal_image.Channels());
-
   std::println("Convolution:  {} x {} x {}", convolution_features.Rows(), convolution_features.Cols(), convolution_features.Channels());
-
   std::println("Pooling:      {} x {} x {}", pooled_features.Rows(), pooled_features.Cols(), pooled_features.Channels());
-
   std::println("Flattened:    {}", model.FlattenedSize());
-
   std::println("Hidden:       {}", hidden_size);
 
   // --------------------------------------------------------
@@ -107,11 +112,8 @@ int main() {
 
   std::println();
   std::println("P(human) = {:.4f}", probability);
-
   std::println("P(human) = {:.2f}%", probability * 100.0);
-
-  std::println("Prediction: {}",
-               probability >= 0.5 ? "HUMAN DETECTED" : "NO HUMAN DETECTED");
+  std::println("Prediction: {}", probability >= 0.5 ? "HUMAN DETECTED" : "NO HUMAN DETECTED");
 
   // --------------------------------------------------------
   // SAVE MODEL

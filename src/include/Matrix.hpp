@@ -1,10 +1,11 @@
 #pragma once
 
 #include <Execution.hpp>
-
+#include <opencv2/opencv.hpp>
 #include <cstddef>
 #include <functional>
 #include <vector>
+#include <filesystem>
 
 namespace bpy {
 
@@ -15,10 +16,7 @@ private:
     std::vector<double> data_;
 
 public:
-    Matrix(
-        std::size_t rows,
-        std::size_t cols,
-        double init_value = 0.0);
+    Matrix(std::size_t rows, std::size_t cols, double init_value = 0.0);
 
     Matrix(const Matrix&) = default;
     Matrix(Matrix&&) noexcept = default;
@@ -59,9 +57,24 @@ public:
         const Matrix& bias,
         ExecutionPolicy policy = ExecutionPolicy::CPU);
 
-    void randomize(
-        double min = -1.0,
-        double max = 1.0);
+    void randomize(double min = -1.0, double max = 1.0);
+    
+static Matrix from_image(const std::filesystem::path& path, bool normalize = true) {
+
+    cv::Mat img = cv::imread(path.string(), cv::IMREAD_GRAYSCALE);
+    
+    if (img.empty()) throw std::invalid_argument("Error: Image file is empty or could not be read!");
+    
+    Matrix mat(img.rows, img.cols);
+    
+    cv::Mat dest_view(img.rows, img.cols, CV_64F, mat.Data());
+
+    double scale = normalize ? (1.0 / 255.0) : 1.0;
+    img.convertTo(dest_view, CV_64F, scale); 
+
+    return mat; 
+}
+
 
     [[nodiscard]]
     Matrix relu() const;

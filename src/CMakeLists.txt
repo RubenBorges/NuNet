@@ -41,9 +41,9 @@ add_executable(NuNet ConvNuNet.cpp
 target_include_directories(NuNet PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc highgui)
 find_package(TBB REQUIRED COMPONENTS tbb)
-target_link_libraries(NuNet PRIVATE TBB::tbb)
+target_link_libraries(NuNet PRIVATE TBB::tbb ${OpenCV_LIBS})
 
 if(NUNET_ENABLE_SYCL)
     include(CheckCXXCompilerFlag)

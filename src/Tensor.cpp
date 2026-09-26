@@ -6,6 +6,8 @@
 #include <limits>
 #include <random>
 #include <stdexcept>
+#include <iomanip>
+#include <iostream>
 
 #if defined(NUNET_ENABLE_SYCL)
 #include <sycl/sycl.hpp>
@@ -225,6 +227,23 @@ Tensor3D::Tensor3D(
         throw std::invalid_argument("Tensor dimensions must be greater than zero");
 }
 
+Tensor3D::Tensor3D(const imagePath& imgPath, bool normalize) {
+    // 1. Read the image string directly from the strong type path module
+    cv::Mat img = cv::imread(imgPath.path.string(), cv::IMREAD_GRAYSCALE);
+    if (img.empty()) {
+        throw std::invalid_argument("Error: Image file is empty or could not be read: " + imgPath.path.string());
+    }
+
+    channels_ = 1;
+    rows_ = static_cast<std::size_t>(img.rows);
+    cols_ = static_cast<std::size_t>(img.cols);
+    data_.resize(channels_ * rows_ * cols_);
+
+    cv::Mat dest_view(img.rows, img.cols, CV_64F, data_.data());
+    double scale = normalize ? (1.0 / 255.0) : 1.0;
+    img.convertTo(dest_view, CV_64F, scale);
+}
+
 double& Tensor3D::operator()(
     std::size_t channel,
     std::size_t row,
@@ -233,21 +252,11 @@ double& Tensor3D::operator()(
     return data_[index(channel, row, col)];
 }
 
-const double& Tensor3D::operator()(
-    std::size_t channel,
-    std::size_t row,
-    std::size_t col) const noexcept
-{
-    return data_[index(channel, row, col)];
-}
+const double& Tensor3D::operator()( std::size_t channel, std::size_t row, std::size_t col) const noexcept {return data_[index(channel, row, col)];}
 
-void Tensor3D::fill(double value) noexcept
-{
-    std::fill(data_.begin(), data_.end(), value);
-}
+void Tensor3D::fill(double value) noexcept {std::fill(data_.begin(), data_.end(), value);}
 
-void Tensor3D::randomize(double min, double max)
-{
+void Tensor3D::randomize(double min, double max){
     if (!(min < max))
         throw std::invalid_argument("Randomization minimum must be less than maximum");
 
@@ -650,4 +659,24 @@ Sender<Tensor3D> Tensor3D::convolve_async(
         });
 }
 
+
+void Tensor3D::print() const {
+    // 1. Loop through every channel slice
+    for (std::size_t ch = 0; ch < channels_; ++ch) {
+        std::cout << "--- Channel " << ch << " ---\n";
+
+        for (std::size_t r = 0; r < rows_; ++r) {
+            std::cout << "[ ";
+
+            for (std::size_t c = 0; c < cols_; ++c) {
+                // Fix: Pass all 3 parameters (channel, row, col) to the operator
+                // Optional: Use std::setw to line up columns cleanly if printing floating-point values
+                std::cout << (*this)(ch, r, c) << " ";
+            }
+
+            std::cout << "]\n";
+        }
+        std::cout << '\n';
+    }
+}
 } // namespace bpy

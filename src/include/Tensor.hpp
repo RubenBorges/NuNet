@@ -1,13 +1,26 @@
 #pragma once
 
 #include <Execution.hpp>
-
+#include <opencv2/opencv.hpp>
+#include <filesystem>
 #include <cstddef>
 #include <vector>
 #include <stdexcept>
 #include <algorithm>
+#include <string>
+#include <utility>
 
 namespace bpy {
+
+
+struct imagePath {
+    std::filesystem::path path;
+
+    imagePath(const char* pathStr) : path(pathStr) {}
+    imagePath(std::string pathString) : path(std::move(pathString)) {}
+    imagePath(std::filesystem::path p) : path(std::move(p)) {}
+};
+
 
 class Tensor3D {
 private:
@@ -26,11 +39,10 @@ private:
     }
 
 public:
-    Tensor3D(
-        std::size_t channels,
-        std::size_t rows,
-        std::size_t cols,
-        double init_value = 0.0);
+    Tensor3D(std::size_t channels, std::size_t rows, std::size_t cols, double init_value = 0.0);
+
+    /** @brief Constructs a Tensor3D directly from a 1-channel image file.**/
+    Tensor3D(const imagePath& imgPath, bool normalize = true);
 
     Tensor3D(const Tensor3D&) = default;
     Tensor3D(Tensor3D&&) noexcept = default;
@@ -68,9 +80,25 @@ public:
 
     void fill(double value) noexcept;
 
-    void randomize(
-        double min = -1.0,
-        double max = 1.0);
+    void randomize(double min = -1.0, double max = 1.0);
+
+    // Static factory function to construct a Tensor3D from a 1-channel image
+    static Tensor3D from_image(const std::filesystem::path& path, bool normalize = true) {
+
+        cv::Mat img = cv::imread(path.string(), cv::IMREAD_GRAYSCALE);
+        
+        if (img.empty()) throw std::invalid_argument("Error: Image file is empty or could not be read: " + path.string());
+
+        Tensor3D tensor(1, static_cast<std::size_t>(img.rows), static_cast<std::size_t>(img.cols));
+
+        cv::Mat dest_view(img.rows, img.cols, CV_64F, tensor.Data());
+
+        double scale = normalize ? (1.0 / 255.0) : 1.0;
+
+        img.convertTo(dest_view, CV_64F, scale);
+
+        return tensor; 
+    }   
 
     [[nodiscard]]
     Tensor3D relu(
@@ -115,6 +143,8 @@ public:
         std::size_t stride = 1,
         std::size_t padding = 0,
         ExecutionPolicy policy = ExecutionPolicy::CPU) const;
+        
+    void print() const;
 };
 
 } // namespace bpy
