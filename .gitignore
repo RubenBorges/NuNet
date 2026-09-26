@@ -6,6 +6,9 @@
 # User-specific files
 #
 #
+misc/**
+misc/FLIR_bronze
+misc/"NuNet v2"
 *.rsuser
 *.suo
 *.user
