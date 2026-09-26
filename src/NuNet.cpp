@@ -1,4 +1,4 @@
-#include <dnnl.hpp>
+#include <oneapi/dnnl/dnnl.hpp>
 #include <iostream>
 #include <chrono>
 #include <fstream>
@@ -13,8 +13,9 @@
 
 using namespace dnnl;
 using namespace bpy;
- 
-constexpr const unsigned int sampleCount {10};
+using uint = unsigned int;
+constexpr uint const sampleCount {10};
+constexpr uint const epochCount {10};
 
 // Generates a synthetic dataset of mixed images (some with humans, some without)
 void generate_dataset(std::vector<float>& data_buffer, std::vector<float>& label_buffer, size_t num_images, size_t rows, size_t cols, size_t channels) {
@@ -157,7 +158,7 @@ int main(int, char* argv[]) {
     constexpr int64_t filters = 8; constexpr int64_t kernel_size = 3; constexpr int64_t hidden_size = 1; 
     constexpr int64_t pool_size = 2; constexpr int64_t pool_stride = 2;
     constexpr float learning_rate = 0.02f;
-    constexpr int epochs = 10;
+    constexpr int epochs = epochCount;
 
     constexpr int64_t conv_rows = (input_rows - kernel_size) / 1 + 1;
     constexpr int64_t conv_cols = (input_cols - kernel_size) / 1 + 1;
@@ -186,7 +187,6 @@ int main(int, char* argv[]) {
     // --------------------------------------------------------
     // ONEDNN ENGINE & MEMORY DESCRIPTORS
     // --------------------------------------------------------
-    
     engine eng(engine::kind::cpu, 0);
     stream strm(eng);
     std::println("Device Stream Engine Initialized");
@@ -195,9 +195,7 @@ int main(int, char* argv[]) {
     auto conv_weights_md = memory::desc({filters, input_channels, kernel_size, kernel_size}, memory::data_type::f32, memory::format_tag::oihw);
     auto conv_bias_md = memory::desc({filters}, memory::data_type::f32, memory::format_tag::x);
     auto conv_dst_md = memory::desc({batch_size, filters, conv_rows, conv_cols}, memory::data_type::f32, memory::format_tag::nchw);
-
     auto pool_dst_md = memory::desc({batch_size, filters, pooled_rows, pooled_cols}, memory::data_type::f32, memory::format_tag::nchw);
-    
     auto fc_src_md = memory::desc({batch_size, flattened_size}, memory::data_type::f32, memory::format_tag::nc);
     auto fc_weights_md = memory::desc({hidden_size, flattened_size}, memory::data_type::f32, memory::format_tag::oi);
     auto fc_bias_md = memory::desc({hidden_size}, memory::data_type::f32, memory::format_tag::x);
@@ -221,42 +219,37 @@ int main(int, char* argv[]) {
     // --------------------------------------------------------
     std::vector<float> dataset_images;
     std::vector<float> dataset_labels;
-    
-   
     const std::string data_path = (model_dir / "FLIR/images_thermal_train/data").string();
     const std::string json_annotation_path = (model_dir / "FLIR/images_thermal_train/coco.json").string();
+    
     std::println("Data Path:{} \n Json Annotation Path: {}", data_path, json_annotation_path);
 
     // Only configure files and run dataset optimization loops if training is forced
     if (must_train_model) {
-        try {
-            std::println("Parsing FLIR ADAS v2 standard COCO index tree via simdjson...");
-            auto flir_label_map = im.parse_flir_v2_thermal_labels(json_annotation_path);
+    try {
+        std::filesystem::path cpp_data_dir = model_dir.parent_path() / "cpp_training_data";
+        std::string img_bin = (cpp_data_dir / "images.bin").string();
+        std::string lbl_bin = (cpp_data_dir / "labels.bin").string();
 
-            if (flir_label_map.empty()) {
-                throw std::runtime_error("Index map file returned empty. Checking fallback parsing.");
-            }
+        std::println("Loading streamlined tensor blocks directly from binary files...");
+        bool load_success = im.load_preprocessed_binaries(dataset_images, dataset_labels, img_bin, lbl_bin);
 
-            std::println("Importing raw visual frame arrays from dataset directory...");
-            bool load_success = im.load_images_with_map(
-                dataset_images, dataset_labels, data_path, flir_label_map,
-                static_cast<size_t>(batch_size), input_rows, input_cols, input_channels
-            );
-
-            if (!load_success) {throw std::runtime_error("Loader encountered size bounds issue matching dataset sizes.");}
-        } 
-        catch (const std::exception& e) {
-            std::println(std::cerr, "Warning: [Data Load Failure] Exception caught: {}", e.what());
-            std::println(std::cerr, "Falling back onto synthetic internal image generator...");
-            generate_dataset(dataset_images, dataset_labels, fallback_dataset_size, input_rows, input_cols, input_channels);
+        if (!load_success) {
+            throw std::runtime_error("Binary tensor files missing. Please run export_dataset.py first!");
         }
-        catch (...) {
-            std::println(std::cerr, "An unknown critical exception occurred while handling FLIR dataset layouts.");
-            return EXIT_FAILURE;
-        }
-        total_dataset_size = dataset_labels.size();
-        batch_count = (total_dataset_size + static_cast<size_t>(batch_size) - 1) / static_cast<size_t>(batch_size);
-
+        
+        // Shuffle the arrays so gradients optimize evenly
+        im.shuffle_dataset(dataset_images, dataset_labels, input_rows, input_cols, input_channels);
+    } 
+    catch (const std::exception& e) {
+        std::println(std::cerr, "Warning: [Data Load Failure] -> {}", e.what());
+        std::println(std::cerr, "Falling back onto synthetic internal image generator...");
+        generate_dataset(dataset_images, dataset_labels, fallback_dataset_size, input_rows, input_cols, input_channels);
+    }
+    
+    total_dataset_size = dataset_labels.size();
+    batch_count = (total_dataset_size + static_cast<size_t>(batch_size) - 1) / static_cast<size_t>(batch_size);
+ 
         // --------------------------------------------------------
         // TRAINING BACKPROPAGATION GRADIENT STACKS
         // --------------------------------------------------------

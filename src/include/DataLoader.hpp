@@ -64,6 +64,8 @@ public:
     bool load_images_from_directory(std::vector<float>& data_buffer, std::vector<float>& label_buffer, const std::string& folder_path, size_t target_count, size_t rows, size_t cols, size_t channels);
     bool load_images_with_map(std::vector<float>& data_buffer, std::vector<float>& label_buffer, const std::string& folder_path, const std::unordered_map<std::string, float>& label_map, size_t target_count, resolution<std::uint8_t> res);
     bool load_images_with_map(std::vector<float>& data_buffer, std::vector<float>& label_buffer, const std::string& folder_path, const std::unordered_map<std::string, float>& label_map, size_t target_count, size_t rows, size_t cols, size_t channels);
+    bool load_preprocessed_binaries(std::vector<float>& data_buffer, std::vector<float>& label_buffer, const std::string& images_bin_path, const std::string& labels_bin_path);
+
     std::unordered_map<std::string, float> parse_flir_labels_simdjson(const std::string& json_path);
     std::unordered_map<std::string, float> parse_flir_v2_thermal_labels(const std::string& json_path);
     

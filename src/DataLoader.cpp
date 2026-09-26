@@ -391,3 +391,41 @@ std::unordered_map<std::string, float> DataLoader::parse_flir_v2_thermal_labels(
 
     return image_to_label;
 }
+
+bool DataLoader::load_preprocessed_binaries(
+    std::vector<float>& data_buffer, 
+    std::vector<float>& label_buffer, 
+    const std::string& images_bin_path, 
+    const std::string& labels_bin_path) 
+{
+    // Open the raw streams
+    std::ifstream img_file(images_bin_path, std::ios::binary | std::ios::ate);
+    std::ifstream lbl_file(labels_bin_path, std::ios::binary | std::ios::ate);
+
+    if (!img_file.is_open() || !lbl_file.is_open()) {
+        std::println(std::cerr, "❌ Error: Could not open preprocessed binary payloads!");
+        return false;
+    }
+
+    // Determine counts by checking byte sizes directly
+    std::streamsize img_bytes = img_file.tellg();
+    std::streamsize lbl_bytes = lbl_file.tellg();
+
+    size_t total_samples = lbl_bytes / sizeof(float);
+    
+    // Reset file stream indices back to zero
+    img_file.seekg(0, std::ios::beg);
+    lbl_file.seekg(0, std::ios::beg);
+
+    // Resize vectors to wrap memory allocations smoothly
+    data_buffer.resize(img_bytes / sizeof(float));
+    label_buffer.resize(total_samples);
+
+    // Read everything directly into the vectors in one block
+    img_file.read(reinterpret_cast<char*>(data_buffer.data()), img_bytes);
+    lbl_file.read(reinterpret_cast<char*>(label_buffer.data()), lbl_bytes);
+
+    available_image_count = total_samples;
+    std::println("🚀 Directly imported {} preprocessed frames from Python binary layouts.", total_samples);
+    return true;
+}
