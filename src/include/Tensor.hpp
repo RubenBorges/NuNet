@@ -60,6 +60,15 @@ public:
         std::size_t row,
         std::size_t col) const noexcept;
 
+
+    double& operator()(
+        std::size_t row,
+        std::size_t col) noexcept;
+
+    const double& operator()(
+        std::size_t row,
+        std::size_t col) const noexcept;
+        
     [[nodiscard]]
     std::size_t Channels() const noexcept { return channels_; }
 

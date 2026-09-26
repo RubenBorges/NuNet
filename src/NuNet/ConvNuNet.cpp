@@ -88,8 +88,7 @@ int main() {
  
   // TEST HUMAN IMAGE
   const Tensor3D thermal_image{make_thermal_image(input_rows, input_cols, input_channels)};
-
-
+  thermal_image.print();
   // --------------------------------------------------------
   // NETWORK INFORMATION
   // --------------------------------------------------------

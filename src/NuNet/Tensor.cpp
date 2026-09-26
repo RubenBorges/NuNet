@@ -251,8 +251,15 @@ double& Tensor3D::operator()(
 {
     return data_[index(channel, row, col)];
 }
+double& Tensor3D::operator()(
+    std::size_t row,
+    std::size_t col) noexcept
+{
+    return data_[(row, col)];
+}
 
 const double& Tensor3D::operator()( std::size_t channel, std::size_t row, std::size_t col) const noexcept {return data_[index(channel, row, col)];}
+const double& Tensor3D::operator()( std::size_t row, std::size_t col) const noexcept {return data_[( row, col)];}
 
 void Tensor3D::fill(double value) noexcept {std::fill(data_.begin(), data_.end(), value);}
 
@@ -661,9 +668,7 @@ Sender<Tensor3D> Tensor3D::convolve_async(
 
 
 void Tensor3D::print() const {
-    // 1. Loop through every channel slice
-    for (std::size_t ch = 0; ch < channels_; ++ch) {
-        std::cout << "--- Channel " << ch << " ---\n";
+ 
 
         for (std::size_t r = 0; r < rows_; ++r) {
             std::cout << "[ ";
@@ -671,12 +676,11 @@ void Tensor3D::print() const {
             for (std::size_t c = 0; c < cols_; ++c) {
                 // Fix: Pass all 3 parameters (channel, row, col) to the operator
                 // Optional: Use std::setw to line up columns cleanly if printing floating-point values
-                std::cout << (*this)(ch, r, c) << " ";
+                std::cout << (*this)(r, c) << " ";
             }
 
             std::cout << "]\n";
         }
-        std::cout << '\n';
-    }
+    
 }
 } // namespace bpy
