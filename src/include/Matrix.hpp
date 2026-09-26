@@ -8,8 +8,8 @@ namespace bpy {
 
 class Matrix {
 private:
-    std::size_t rows_;
-    std::size_t cols_;
+    std::size_t rows_{};
+    std::size_t cols_{};
     std::vector<double> data_;
 
 public:
@@ -18,6 +18,10 @@ public:
         std::size_t cols,
         double init_value = 0.0);
 
+    Matrix(const Matrix&) = default;
+    Matrix(Matrix&&) noexcept = default;
+    Matrix& operator=(const Matrix&) = default;
+    Matrix& operator=(Matrix&&) noexcept = default;
     ~Matrix() = default;
 
     double& operator()(
@@ -55,6 +59,22 @@ public:
         double max = 1.0);
 
     [[nodiscard]]
+    Matrix relu() const;
+
+    [[nodiscard]]
+    Matrix max_pool(
+        std::size_t pool_size = 2,
+        std::size_t stride = 2) const;
+
+    [[nodiscard]]
+    Matrix flatten() const;
+
+    [[nodiscard]]
+    Matrix convolve(
+        const Matrix& kernel,
+        std::size_t stride = 1) const;
+
+    [[nodiscard]]
     std::size_t Rows() const noexcept {
         return rows_;
     }
@@ -69,6 +89,16 @@ public:
         return data_.size();
     }
 
+    [[nodiscard]]
+    double* Data() noexcept {
+        return data_.data();
+    }
+
+    [[nodiscard]]
+    const double* Data() const noexcept {
+        return data_.data();
+    }
+
     double get(
         std::size_t row,
         std::size_t col) const noexcept;
@@ -79,9 +109,6 @@ public:
         double value) noexcept;
 
     void print() const;
-
-    static void randomize_matrix(
-        Matrix& matrix);
 };
 
 } // namespace bpy

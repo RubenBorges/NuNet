@@ -3,7 +3,10 @@
 #include <Tensor.hpp>
 
 #include <cstddef>
-#include <random>
+#include <cstdint>
+#include <istream>
+#include <ostream>
+#include <vector>
 
 namespace bpy {
 
@@ -13,32 +16,6 @@ enum class Padding {
 };
 
 class Conv2D {
-private:
-    std::size_t input_channels_;
-    std::size_t output_channels_;
-    std::size_t kernel_size_;
-    std::size_t stride_;
-    Padding padding_;
-
-    // [output_channel][input_channel][kernel][kernel]
-    Tensor3D weights_;
-
-    // [output_channel]
-    std::vector<double> biases_;
-
-    [[nodiscard]]
-    std::size_t output_rows(std::size_t input_rows) const noexcept;
-
-    [[nodiscard]]
-    std::size_t output_cols(std::size_t input_cols) const noexcept;
-
-    [[nodiscard]]
-    double weight(
-        std::size_t output_channel,
-        std::size_t input_channel,
-        std::size_t kernel_row,
-        std::size_t kernel_col) const noexcept;
-
 public:
     Conv2D(
         std::size_t input_channels,
@@ -47,20 +24,19 @@ public:
         std::size_t stride = 1,
         Padding padding = Padding::Valid);
 
-    ~Conv2D() = default;
-
     Conv2D(const Conv2D&) = default;
     Conv2D(Conv2D&&) noexcept = default;
-
     Conv2D& operator=(const Conv2D&) = default;
     Conv2D& operator=(Conv2D&&) noexcept = default;
+    ~Conv2D() = default;
 
     [[nodiscard]]
     Tensor3D forward(const Tensor3D& input) const;
 
-    void randomize(
-        double min = -0.1,
-        double max = 0.1);
+    void randomize();
+
+    void save(std::ostream& stream) const;
+    void load(std::istream& stream);
 
     [[nodiscard]]
     std::size_t InputChannels() const noexcept {
@@ -83,21 +59,29 @@ public:
     }
 
     [[nodiscard]]
-    Padding PaddingMode() const noexcept {
+    Padding GetPadding() const noexcept {
         return padding_;
     }
 
     [[nodiscard]]
-    std::size_t OutputRows(
-        std::size_t input_rows) const noexcept {
-        return output_rows(input_rows);
+    const Tensor3D& Weights() const noexcept {
+        return weights_;
     }
 
     [[nodiscard]]
-    std::size_t OutputCols(
-        std::size_t input_cols) const noexcept {
-        return output_cols(input_cols);
+    const std::vector<double>& Biases() const noexcept {
+        return biases_;
     }
+
+private:
+    std::size_t input_channels_{};
+    std::size_t output_channels_{};
+    std::size_t kernel_size_{};
+    std::size_t stride_{};
+    Padding padding_{Padding::Valid};
+
+    Tensor3D weights_;
+    std::vector<double> biases_;
 };
 
 } // namespace bpy

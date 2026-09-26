@@ -4,58 +4,27 @@
 
 #include <cstddef>
 #include <functional>
-#include <string>
+#include <istream>
+#include <ostream>
 
 namespace bpy {
 
 class DenseLayer {
-private:
-    Matrix weights_;
-    Matrix biases_;
-
-    std::function<double(double)> activation_;
-
 public:
+    using Activation = std::function<double(double)>;
+
     DenseLayer(
         std::size_t input_size,
         std::size_t output_size,
-        std::function<double(double)> activation);
-
-    ~DenseLayer() = default;
-
-    DenseLayer(const DenseLayer&) = default;
-    DenseLayer(DenseLayer&&) noexcept = default;
-
-    DenseLayer& operator=(const DenseLayer&) = default;
-    DenseLayer& operator=(DenseLayer&&) noexcept = default;
+        Activation activation);
 
     [[nodiscard]]
-    Matrix forward(const Matrix& inputs) const;
+    Matrix forward(const Matrix& input) const;
 
-    void randomize(
-        double min = -1.0,
-        double max = 1.0);
+    void randomize();
 
-    void initialize_he(
-        std::size_t input_size);
-
-    void save_to_csv(
-        const std::string& weights_filename,
-        const std::string& biases_filename) const;
-
-    void load_from_csv(
-        const std::string& weights_filename,
-        const std::string& biases_filename);
-
-    [[nodiscard]]
-    const Matrix& GetWeights() const noexcept {
-        return weights_;
-    }
-
-    [[nodiscard]]
-    const Matrix& GetBiases() const noexcept {
-        return biases_;
-    }
+    void save(std::ostream& stream) const;
+    void load(std::istream& stream);
 
     [[nodiscard]]
     std::size_t InputSize() const noexcept {
@@ -66,6 +35,21 @@ public:
     std::size_t OutputSize() const noexcept {
         return weights_.Cols();
     }
+
+    [[nodiscard]]
+    const Matrix& Weights() const noexcept {
+        return weights_;
+    }
+
+    [[nodiscard]]
+    const Matrix& Biases() const noexcept {
+        return biases_;
+    }
+
+private:
+    Matrix weights_;
+    Matrix biases_;
+    Activation activation_;
 };
 
 } // namespace bpy

@@ -1,8 +1,10 @@
 #include <DenseLayer.hpp>
 
+#include <algorithm>
 #include <cmath>
-#include <fstream>
-#include <sstream>
+#include <cstdint>
+#include <istream>
+#include <ostream>
 #include <stdexcept>
 
 namespace bpy {
@@ -10,202 +12,139 @@ namespace bpy {
 DenseLayer::DenseLayer(
     std::size_t input_size,
     std::size_t output_size,
-    std::function<double(double)> activation)
-    : weights_{
-          input_size,
-          output_size,
-          0.0
-      },
-      biases_{
-          1,
-          output_size,
-          0.0
-      },
-      activation_{
-          std::move(activation)
-      }
+    Activation activation)
+    : weights_{input_size, output_size},
+      biases_{1, output_size},
+      activation_{std::move(activation)}
 {
     if (input_size == 0 || output_size == 0)
         throw std::invalid_argument(
-            "DenseLayer dimensions must be greater than zero");
+            "Dense layer dimensions must be greater than zero");
 
-    initialize_he(input_size);
+    if (!activation_)
+        throw std::invalid_argument(
+            "Dense layer requires an activation function");
+
+    randomize();
 }
 
-Matrix DenseLayer::forward(
-    const Matrix& inputs) const
+void DenseLayer::randomize()
 {
-    if (inputs.Cols() != weights_.Rows())
+    const double fan_in =
+        static_cast<double>(weights_.Rows());
+
+    const double limit =
+        std::sqrt(6.0 / fan_in);
+
+    weights_.randomize(-limit, limit);
+
+    for (std::size_t c = 0; c < biases_.Cols(); ++c)
+        biases_(0, c) = 0.0;
+}
+
+Matrix DenseLayer::forward(const Matrix& input) const
+{
+    if (input.Cols() != weights_.Rows())
+    {
         throw std::invalid_argument(
-            "DenseLayer input dimensions do not match weights");
+            "Dense input size does not match layer");
+    }
 
     Matrix output =
         Matrix::dense(
-            inputs,
+            input,
             weights_,
-            biases_
-        );
+            biases_);
 
-    if (activation_)
-        output.map_inplace(activation_);
+    output.map_inplace(activation_);
 
     return output;
 }
 
-void DenseLayer::randomize(
-    double min,
-    double max)
+void DenseLayer::save(std::ostream& stream) const
 {
-    weights_.randomize(min, max);
-    biases_.randomize(
-        min * 0.1,
-        max * 0.1
-    );
+    const auto rows =
+        static_cast<std::uint64_t>(weights_.Rows());
+
+    const auto cols =
+        static_cast<std::uint64_t>(weights_.Cols());
+
+    stream.write(
+        reinterpret_cast<const char*>(&rows),
+        sizeof(rows));
+
+    stream.write(
+        reinterpret_cast<const char*>(&cols),
+        sizeof(cols));
+
+    for (std::size_t r = 0; r < weights_.Rows(); ++r)
+    {
+        stream.write(
+            reinterpret_cast<const char*>(
+                &weights_(r, 0)),
+            static_cast<std::streamsize>(
+                weights_.Cols() * sizeof(double)));
+    }
+
+    const auto bias_count =
+        static_cast<std::uint64_t>(biases_.Cols());
+
+    stream.write(
+        reinterpret_cast<const char*>(&bias_count),
+        sizeof(bias_count));
+
+    stream.write(
+        reinterpret_cast<const char*>(biases_.Data()),
+        static_cast<std::streamsize>(
+            biases_.Size() * sizeof(double)));
 }
 
-void DenseLayer::initialize_he(
-    std::size_t input_size)
+void DenseLayer::load(std::istream& stream)
 {
-    if (input_size == 0)
-        throw std::invalid_argument(
-            "He initialization requires input_size > 0");
+    std::uint64_t rows{};
+    std::uint64_t cols{};
 
-    const double limit =
-        std::sqrt(
-            6.0 /
-            static_cast<double>(input_size)
-        );
+    stream.read(
+        reinterpret_cast<char*>(&rows),
+        sizeof(rows));
 
-    weights_.randomize(
-        -limit,
-        limit
-    );
+    stream.read(
+        reinterpret_cast<char*>(&cols),
+        sizeof(cols));
 
-    biases_.map_inplace(
-        [](double) noexcept {
-            return 0.0;
-        }
-    );
-}
-
-void DenseLayer::save_to_csv(
-    const std::string& weights_filename,
-    const std::string& biases_filename) const
-{
-    std::ofstream weights_file(weights_filename);
-
-    if (!weights_file)
-        throw std::runtime_error(
-            "Could not open weights file: " +
-            weights_filename
-        );
-
-    for (std::size_t r = 0;
-         r < weights_.Rows();
-         ++r)
+    if (rows != weights_.Rows() ||
+        cols != weights_.Cols())
     {
-        for (std::size_t c = 0;
-             c < weights_.Cols();
-             ++c)
-        {
-            if (c != 0)
-                weights_file << ',';
-
-            weights_file << weights_(r, c);
-        }
-
-        weights_file << '\n';
+        throw std::runtime_error(
+            "Dense layer architecture does not match saved model");
     }
 
-    std::ofstream biases_file(biases_filename);
-
-    if (!biases_file)
-        throw std::runtime_error(
-            "Could not open biases file: " +
-            biases_filename
-        );
-
-    for (std::size_t c = 0;
-         c < biases_.Cols();
-         ++c)
+    for (std::size_t r = 0; r < weights_.Rows(); ++r)
     {
-        if (c != 0)
-            biases_file << ',';
-
-        biases_file << biases_(0, c);
+        stream.read(
+            reinterpret_cast<char*>(&weights_(r, 0)),
+            static_cast<std::streamsize>(
+                weights_.Cols() * sizeof(double)));
     }
 
-    biases_file << '\n';
-}
+    std::uint64_t bias_count{};
 
-void DenseLayer::load_from_csv(
-    const std::string& weights_filename,
-    const std::string& biases_filename)
-{
-    std::ifstream weights_file(weights_filename);
+    stream.read(
+        reinterpret_cast<char*>(&bias_count),
+        sizeof(bias_count));
 
-    if (!weights_file)
+    if (bias_count != biases_.Cols())
         throw std::runtime_error(
-            "Could not open weights file: " +
-            weights_filename
-        );
+            "Invalid Dense bias count");
 
-    std::string line;
+    stream.read(
+        reinterpret_cast<char*>(biases_.Data()),
+        static_cast<std::streamsize>(
+            biases_.Size() * sizeof(double)));
 
-    for (std::size_t r = 0;
-         r < weights_.Rows();
-         ++r)
-    {
-        if (!std::getline(weights_file, line))
-            throw std::runtime_error(
-                "Weights file contains too few rows"
-            );
-
-        std::stringstream stream(line);
-        std::string value;
-
-        for (std::size_t c = 0;
-             c < weights_.Cols();
-             ++c)
-        {
-            if (!std::getline(stream, value, ','))
-                throw std::runtime_error(
-                    "Weights file contains too few columns"
-                );
-
-            weights_(r, c) =
-                std::stod(value);
-        }
-    }
-
-    std::ifstream biases_file(biases_filename);
-
-    if (!biases_file)
+    if (!stream)
         throw std::runtime_error(
-            "Could not open biases file: " +
-            biases_filename
-        );
-
-    if (!std::getline(biases_file, line))
-        throw std::runtime_error(
-            "Bias file is empty"
-        );
-
-    std::stringstream stream(line);
-    std::string value;
-
-    for (std::size_t c = 0;
-         c < biases_.Cols();
-         ++c)
-    {
-        if (!std::getline(stream, value, ','))
-            throw std::runtime_error(
-                "Bias file contains too few values"
-            );
-
-        biases_(0, c) =
-            std::stod(value);
-    }
+            "Corrupt Dense layer data");
 }
 
 } // namespace bpy

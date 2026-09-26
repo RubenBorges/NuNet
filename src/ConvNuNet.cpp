@@ -1,13 +1,11 @@
 #include <CNN.hpp>
-#include <Conv2D.hpp>
 #include <Tensor.hpp>
 
 #include <cstddef>
+#include <filesystem>
 #include <print>
-#include <utility>
 
 using bpy::CNN;
-using bpy::Conv2D;
 using bpy::Padding;
 using bpy::Tensor3D;
 
@@ -72,127 +70,139 @@ int main()
     constexpr std::size_t input_cols{24};
     constexpr std::size_t input_channels{1};
 
-    constexpr std::size_t filters{4};
+    constexpr std::size_t filters{8};
     constexpr std::size_t kernel_size{3};
-    constexpr std::size_t convolution_stride{1};
+    constexpr std::size_t hidden_size{32};
 
     constexpr std::size_t pool_size{2};
     constexpr std::size_t pool_stride{2};
 
-    constexpr std::size_t hidden_neurons{32};
+    constexpr auto model_file =
+        "human_detector.nn";
 
     // --------------------------------------------------------
-    // CNN
+    // NETWORK DEFINITION
     // --------------------------------------------------------
 
-    Conv2D convolution{
-        input_channels,
-        filters,
-        kernel_size,
-        convolution_stride,
-        Padding::Valid
+    const CNN::Config config{
+        .input_channels = input_channels,
+
+        .filters = filters,
+        .kernel_size = kernel_size,
+        .convolution_stride = 1,
+        .padding = Padding::Valid,
+
+        .pool_size = pool_size,
+        .pool_stride = pool_stride,
+
+        .hidden_size = hidden_size
     };
 
-    const auto convolution_rows =
-        convolution.OutputRows(input_rows);
-
-    const auto convolution_cols =
-        convolution.OutputCols(input_cols);
-
-    const auto pooled_rows =
-        (convolution_rows - pool_size) /
-            pool_stride + 1;
-
-    const auto pooled_cols =
-        (convolution_cols - pool_size) /
-            pool_stride + 1;
-
-    const auto flattened_size =
-        filters *
-        pooled_rows *
-        pooled_cols;
+    // --------------------------------------------------------
+    // MODEL
+    // --------------------------------------------------------
 
     CNN model{
-        std::move(convolution),
-        flattened_size,
-        hidden_neurons,
-        pool_size,
-        pool_stride
+        config,
+        input_rows,
+        input_cols
     };
 
     // --------------------------------------------------------
-    // Input
+    // INPUT
     // --------------------------------------------------------
 
     const Tensor3D thermal_image{
         make_thermal_image(
             input_rows,
             input_cols,
-            input_channels
-        )
+            input_channels)
     };
 
     // --------------------------------------------------------
-    // Prediction
+    // NETWORK INFORMATION
+    // --------------------------------------------------------
+
+    const auto convolution_features =
+        model.convolution_features(
+            thermal_image);
+
+    const auto pooled_features =
+        model.pooled_features(
+            thermal_image);
+
+    std::println(
+        "Input:        {} x {} x {}",
+        thermal_image.Rows(),
+        thermal_image.Cols(),
+        thermal_image.Channels());
+
+    std::println(
+        "Convolution:  {} x {} x {}",
+        convolution_features.Rows(),
+        convolution_features.Cols(),
+        convolution_features.Channels());
+
+    std::println(
+        "Pooling:      {} x {} x {}",
+        pooled_features.Rows(),
+        pooled_features.Cols(),
+        pooled_features.Channels());
+
+    std::println(
+        "Flattened:    {}",
+        model.FlattenedSize());
+
+    std::println(
+        "Hidden:       {}",
+        hidden_size);
+
+    // --------------------------------------------------------
+    // PREDICTION
     // --------------------------------------------------------
 
     const double probability =
         model.predict(thermal_image);
 
-    // --------------------------------------------------------
-    // Result
-    // --------------------------------------------------------
-
     std::println();
-
-    std::println(
-        "Input:       {} x {} x {}",
-        thermal_image.Rows(),
-        thermal_image.Cols(),
-        thermal_image.Channels()
-    );
-
-    std::println(
-        "Convolution: {} x {} x {}",
-        convolution_rows,
-        convolution_cols,
-        filters
-    );
-
-    std::println(
-        "Pooling:     {} x {} x {}",
-        pooled_rows,
-        pooled_cols,
-        filters
-    );
-
-    std::println(
-        "Flattened:   {}",
-        flattened_size
-    );
-
-    std::println(
-        "Dense:       {} -> {} -> 1",
-        flattened_size,
-        hidden_neurons
-    );
-
-    std::println();
-
     std::println(
         "P(human) = {:.4f}",
-        probability
-    );
+        probability);
 
     std::println(
         "P(human) = {:.2f}%",
-        probability * 100.0
-    );
+        probability * 100.0);
 
     std::println(
         "Prediction: {}",
         probability >= 0.5
             ? "HUMAN DETECTED"
-            : "NO HUMAN DETECTED"
-    );
+            : "NO HUMAN DETECTED");
+
+    // --------------------------------------------------------
+    // SAVE MODEL
+    // --------------------------------------------------------
+
+    model.save(model_file);
+
+    std::println(
+        "Model saved: {}",
+        model_file);
+
+    // --------------------------------------------------------
+    // LOAD MODEL
+    // --------------------------------------------------------
+
+    CNN loaded =
+        CNN::load_model(model_file);
+
+    const double loaded_probability =
+        loaded.predict(thermal_image);
+
+    std::println();
+    std::println(
+        "Loaded model P(human) = {:.4f}",
+        loaded_probability);
+
+    return 0;
 }
