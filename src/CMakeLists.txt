@@ -8,7 +8,7 @@
 # )
 
 set(NNT_SOURCES
-    OneDNNet.cpp
+    NuNet.cpp
     debug.cpp
     DataLoader.cpp
 
