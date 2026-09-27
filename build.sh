@@ -16,6 +16,9 @@ cleanup_artifacts() {
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+source /opt/intel/oneapi/setvars.sh
+export CXX=icpx
+
 readonly BUILD_DIR="build"
 readonly INSTALL_DIR="dist"
 readonly OUT_DIR="out"
@@ -25,6 +28,7 @@ readonly BUILD_PRESET="dev-build"
 readonly INSTALL_PRESET="dev-install"
 
 require_command cmake
+require_command icpx
 
 if [[ ! -f "$PRESETS_FILE" ]]; then
 	echo "Error: CMakePresets.json was not found in $SCRIPT_DIR." >&2

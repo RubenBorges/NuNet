@@ -1,4 +1,12 @@
-#include <oneapi/dnnl/dnnl.hpp>
+#include <dnnl.hpp>
+#include <dnnl_sycl.hpp>
+#include <sycl/sycl.hpp>
+#include <opencv2/opencv.hpp>
+#include "opencv2/core/parallel/backend/parallel_for.tbb.hpp"
+#include <opencv2/core/parallel/parallel_backend.hpp>
+
+#include <oneapi/tbb/global_control.h>
+#include <tbb/global_control.h>
 #include <iostream>
 #include <chrono>
 #include <fstream>
@@ -18,28 +26,6 @@ constexpr uint const sampleCount {10};
 constexpr uint const epochCount {10};
 
 // Generates a synthetic dataset of mixed images (some with humans, some without)
-void generate_dataset(std::vector<float>& data_buffer, std::vector<float>& label_buffer, size_t num_images, size_t rows, size_t cols, size_t channels) {
-    data_buffer.resize(num_images * channels * rows * cols, 0.1f);
-    label_buffer.resize(num_images, 0.0f);
-
-    size_t img_stride = channels * rows * cols;
-    auto idx{[&](size_t img_idx, size_t c, size_t r, size_t o) { return img_idx * img_stride + c * (rows * cols) + r * cols + o; }};
-
-    for (size_t i = 0; i < num_images; ++i) {
-        // Every alternate image is a human target
-        if (i % 2 == 0) {
-            label_buffer[i] = 1.0f; // Target: Human Present
-            // Add a synthetic hot signature blob
-            for (size_t r = 5; r <= 15 && r < rows; ++r) {
-                for (size_t c = 8; c <= 16 && c < cols; ++c) data_buffer[idx(i, 0, r, c)] = 0.95f;
-            }
-        } else {
-            label_buffer[i] = 0.05f; // Target: Empty background noise
-        }
-    }
-    std::println("GENERATED {} SYNTHETIC TEST DATA.", num_images);
-}
-
 float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
 void image_to_features(const convolution_forward& convolution, const eltwise_forward& activation,const pooling_forward& pooling,stream& execution_stream,
@@ -128,7 +114,15 @@ std::vector<float> route_predictions(
 }
 
 
-int main(int, char* argv[]) {
+int main(int argc, char* argv[]) {
+    cv::parallel::setParallelForBackend(std::make_shared<cv::parallel::tbb::ParallelForBackend>());
+    bool force_training = false;
+    if (argc == 2 && std::string_view(argv[1]) == "--train") {
+        force_training = true;
+    } else if (argc != 1) {
+        std::println(std::cerr, "Usage: {} [--train]", argv[0]);
+        return EXIT_FAILURE;
+    }
 
     // --------------------------------------------------------
     // TIME & LOGGER INITIALIZATION
@@ -138,19 +132,23 @@ int main(int, char* argv[]) {
     std::chrono::year_month_day date{current_day}; 
     std::chrono::hh_mm_ss<std::chrono::nanoseconds> time{now - current_day};
 
-        const std::filesystem::path runtime_dir = std::filesystem::absolute(argv[0]).lexically_normal().parent_path();
-        const std::filesystem::path model_dir = runtime_dir.parent_path() / "resources/model";
-        dbglog logger(date, runtime_dir / "debug.log");
+    const std::filesystem::path runtime_dir{std::filesystem::absolute(argv[0]).lexically_normal().parent_path()};
+    const std::filesystem::path model_dir = runtime_dir.parent_path().string()+="/resources/model";
+    dbglog logger(date, runtime_dir / "debug.log");
     DataLoader im(logger);
     
+    std::println("{}", cv::getBuildInformation());
+    
+    tbb::global_control cache_window(tbb::global_control::max_allowed_parallelism, 4);
+    cv::setNumThreads(4);
 
-        const std::string model_path = (model_dir / "human_detector.nn").string();
+
+    const std::string model_path = (model_dir / "human_detector.nn").string();
     std::println("Model Located: {}", model_path);
     // --------------------------------------------------------
     // DATASET & BATCH HYPERPARAMETERS
     // --------------------------------------------------------
     constexpr int64_t batch_size = sampleCount; 
-    constexpr size_t fallback_dataset_size = 10;
     size_t total_dataset_size = 0;
     size_t batch_count = 0;
     
@@ -170,7 +168,7 @@ int main(int, char* argv[]) {
     // MODEL VARIABLES & CONDITIONAL SYSTEM LOADING
     // --------------------------------------------------------
     std::vector<float> conv_w, conv_b, fc_w, fc_b;
-    bool must_train_model = false;
+    bool must_train_model = force_training;
 
     // Attempting load cycle sequence execution
     if(im.load_onednn_model(model_path, conv_w, conv_b, fc_w, fc_b, time) == false) {
@@ -227,7 +225,7 @@ int main(int, char* argv[]) {
     // Only configure files and run dataset optimization loops if training is forced
     if (must_train_model) {
     try {
-        std::filesystem::path cpp_data_dir = model_dir.parent_path() / "cpp_training_data";
+        std::filesystem::path cpp_data_dir = model_dir / "FLIR" / "cpp_training_data";
         std::string img_bin = (cpp_data_dir / "images.bin").string();
         std::string lbl_bin = (cpp_data_dir / "labels.bin").string();
 
@@ -235,16 +233,24 @@ int main(int, char* argv[]) {
         bool load_success = im.load_preprocessed_binaries(dataset_images, dataset_labels, img_bin, lbl_bin);
 
         if (!load_success) {
-            throw std::runtime_error("Binary tensor files missing. Please run export_dataset.py first!");
+            std::println(std::cerr, "Error: Could not load FLIR training binaries from {}", cpp_data_dir.string());
+            return EXIT_FAILURE;
+        }
+
+        const size_t values_per_image = static_cast<size_t>(input_rows * input_cols * input_channels);
+        if (dataset_labels.empty() || dataset_images.size() != dataset_labels.size() * values_per_image) {
+            std::println(std::cerr,
+                         "Error: FLIR binary sizes do not match the configured {}x{}x{} input and label count.",
+                         input_rows, input_cols, input_channels);
+            return EXIT_FAILURE;
         }
         
         // Shuffle the arrays so gradients optimize evenly
         im.shuffle_dataset(dataset_images, dataset_labels, input_rows, input_cols, input_channels);
     } 
     catch (const std::exception& e) {
-        std::println(std::cerr, "Warning: [Data Load Failure] -> {}", e.what());
-        std::println(std::cerr, "Falling back onto synthetic internal image generator...");
-        generate_dataset(dataset_images, dataset_labels, fallback_dataset_size, input_rows, input_cols, input_channels);
+        std::println(std::cerr, "Error: [Data Load Failure] -> {}", e.what());
+        return EXIT_FAILURE;
     }
     
     total_dataset_size = dataset_labels.size();
@@ -314,12 +320,11 @@ int main(int, char* argv[]) {
                     prim_conv_fwd, prim_relu_fwd, prim_pool_fwd, strm,
                     src_mem, conv_w_mem, conv_b_mem, conv_dst_mem,
                     pool_dst_mem, pool_workspace_mem);
-                auto expert_probabilities = expert_prediction(
+                auto expert_probabilities {expert_prediction(
                     prim_fc_fwd, strm, pool_dst_mem, fc_w_mem, fc_b_mem,
-                    fc_dst_mem, static_cast<size_t>(batch_size));
+                    fc_dst_mem, static_cast<size_t>(batch_size))};
                 std::vector<std::vector<float>> expert_outputs{std::move(expert_probabilities)};
-                std::vector<std::vector<float>> routing_weights(
-                    static_cast<size_t>(batch_size), std::vector<float>{1.0f});
+                std::vector<std::vector<float>> routing_weights(static_cast<size_t>(batch_size), std::vector<float>{1.0f});
                 const auto routed_probabilities = route_predictions(expert_outputs, routing_weights);
 
                 // 2. MINI-BATCH LOSS & LOSS GRADIENT EVALUATION

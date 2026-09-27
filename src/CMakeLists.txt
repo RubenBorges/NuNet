@@ -26,6 +26,7 @@ add_executable(NuNet ${NNT_SOURCES})
 # Include directory lookup setup
 target_include_directories(NuNet PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    /opt/intel/oneapi/2026.0/include
 )
 
 # Standard dependencies lookup
@@ -41,6 +42,9 @@ if(NOT TARGET DNNL::dnnl)
 endif()
 
 get_target_property(DNNL_INCLUDE_DIRS DNNL::dnnl INTERFACE_INCLUDE_DIRECTORIES)
+if(NOT DNNL_INCLUDE_DIRS AND dnnl_DIR)
+    get_filename_component(DNNL_INCLUDE_DIRS "${dnnl_DIR}/../../../include" ABSOLUTE)
+endif()
 target_include_directories(NuNet SYSTEM PRIVATE ${DNNL_INCLUDE_DIRS})
 
 # Link dependencies using standard lowercase DNNL::dnnl target mapping

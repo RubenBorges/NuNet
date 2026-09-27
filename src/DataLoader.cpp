@@ -124,7 +124,7 @@ void DataLoader::shuffle_dataset(std::vector<float>& data_buffer, std::vector<fl
         // Copy entire pixel array block matching the single tensor boundary
         std::copy(data_buffer.begin() + (old_idx * img_size),
                   data_buffer.begin() + ((old_idx + 1) * img_size),
-                  data_buffer.begin() + (i * img_size));
+                  shuffled_data.begin() + (i * img_size));
     }
 
     // Move data swaps back into reference containers natively

@@ -12,6 +12,8 @@ require_command() {
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+
+
 readonly PRESET_NAME="dev"
 readonly BUILD_DIR="build"
 readonly INSTALL_DIR="dist"
@@ -19,6 +21,7 @@ readonly OUT_DIR="out"
 readonly PRESETS_FILE="$SCRIPT_DIR/CMakePresets.json"
 
 require_command cmake
+require_command icpx
 
 if [[ ! -f "$PRESETS_FILE" ]]; then
 	echo "Error: CMakePresets.json was not found in $SCRIPT_DIR." >&2
