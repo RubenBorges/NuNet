@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 IMAGE_WIDTH = 640
 IMAGE_HEIGHT = 512
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
+CORES_TO_USE = 4
 
 class FLIRPersonDataset(Dataset):
     def __init__(self, data_root: Path, split: str):
@@ -157,7 +157,8 @@ def evaluate(
 
 def train(arguments: argparse.Namespace) -> None:
     torch.manual_seed(arguments.seed)
-    torch.set_num_threads(max(1, min(8, os.cpu_count() or 1)))
+   # torch.set_num_threads(max(1, min(4, os.cpu_count() or 1)))
+    torch.set_num_threads(CORES_TO_USE)
     device = select_device(arguments.device)
 
     data_root = arguments.data_root.resolve()

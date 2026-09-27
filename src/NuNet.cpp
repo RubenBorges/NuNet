@@ -22,29 +22,45 @@
 using namespace dnnl;
 using namespace bpy;
 using uint = unsigned int;
-constexpr uint const sampleCount {10};
-constexpr uint const epochCount {10};
+constexpr uint const sampleCount {256};
+constexpr uint const epochCount {50};
 
 // Generates a synthetic dataset of mixed images (some with humans, some without)
 float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
+void apply_sgd(memory& parameters, memory& gradients, size_t count, float learning_rate) {
+    float* mapped_parameters = static_cast<float*>(parameters.map_data());
+    float* mapped_gradients = static_cast<float*>(gradients.map_data());
+    for (size_t index = 0; index < count; ++index) {
+        mapped_parameters[index] -= learning_rate * mapped_gradients[index];
+    }
+    gradients.unmap_data(mapped_gradients);
+    parameters.unmap_data(mapped_parameters);
+}
+
+void copy_from_memory(memory& source, std::vector<float>& destination) {
+    float* mapped_source = static_cast<float*>(source.map_data());
+    std::copy_n(mapped_source, destination.size(), destination.begin());
+    source.unmap_data(mapped_source);
+}
+
 void image_to_features(const convolution_forward& convolution, const eltwise_forward& activation,const pooling_forward& pooling,stream& execution_stream,
-    memory& images,memory& convolution_weights,memory& convolution_biases,memory& convolution_output,memory& features,memory& pooling_workspace){
-        convolution.execute(execution_stream, {
-        {DNNL_ARG_SRC, images},
-        {DNNL_ARG_WEIGHTS, convolution_weights},
-        {DNNL_ARG_BIAS, convolution_biases},
-        {DNNL_ARG_DST, convolution_output}
-    });
+                       memory& images,memory& convolution_weights,memory& convolution_biases,memory& convolution_output,memory& features,memory& pooling_workspace){
+    convolution.execute(execution_stream, {
+                                              {DNNL_ARG_SRC, images},
+                                              {DNNL_ARG_WEIGHTS, convolution_weights},
+                                              {DNNL_ARG_BIAS, convolution_biases},
+                                              {DNNL_ARG_DST, convolution_output}
+                                          });
     activation.execute(execution_stream, {
-        {DNNL_ARG_SRC, convolution_output},
-        {DNNL_ARG_DST, convolution_output}
-    });
+                                             {DNNL_ARG_SRC, convolution_output},
+                                             {DNNL_ARG_DST, convolution_output}
+                                         });
     pooling.execute(execution_stream, {
-        {DNNL_ARG_SRC, convolution_output},
-        {DNNL_ARG_DST, features},
-        {DNNL_ARG_WORKSPACE, pooling_workspace}
-    });
+                                          {DNNL_ARG_SRC, convolution_output},
+                                          {DNNL_ARG_DST, features},
+                                          {DNNL_ARG_WORKSPACE, pooling_workspace}
+                                      });
 }
 
 std::vector<float> expert_prediction(
@@ -57,18 +73,19 @@ std::vector<float> expert_prediction(
     size_t batch_count)
 {
     expert.execute(execution_stream, {
-        {DNNL_ARG_SRC, features},
-        {DNNL_ARG_WEIGHTS, weights},
-        {DNNL_ARG_BIAS, biases},
-        {DNNL_ARG_DST, logits}
-    });
+                                         {DNNL_ARG_SRC, features},
+                                         {DNNL_ARG_WEIGHTS, weights},
+                                         {DNNL_ARG_BIAS, biases},
+                                         {DNNL_ARG_DST, logits}
+                                     });
     execution_stream.wait();
 
-    const float* values = static_cast<const float*>(logits.get_data_handle());
+    float* values = static_cast<float*>(logits.map_data());
     std::vector<float> probabilities(batch_count);
     for (size_t sample = 0; sample < batch_count; ++sample) {
         probabilities[sample] = sigmoid(values[sample]);
     }
+    logits.unmap_data(values);
     return probabilities;
 }
 
@@ -107,7 +124,7 @@ std::vector<float> route_predictions(
 
         for (size_t expert_index = 0; expert_index < expert_count; ++expert_index) {
             routed[sample] += expert_probabilities[expert_index][sample] *
-                routing_weights[sample][expert_index] / weight_sum;
+                              routing_weights[sample][expert_index] / weight_sum;
         }
     }
     return routed;
@@ -127,18 +144,21 @@ int main(int argc, char* argv[]) {
     // --------------------------------------------------------
     // TIME & LOGGER INITIALIZATION
     // --------------------------------------------------------
-    auto now = std::chrono::system_clock::now();   
+    auto now = std::chrono::system_clock::now();
     auto current_day = std::chrono::floor<std::chrono::days>(now);
-    std::chrono::year_month_day date{current_day}; 
+    std::chrono::year_month_day date{current_day};
     std::chrono::hh_mm_ss<std::chrono::nanoseconds> time{now - current_day};
 
     const std::filesystem::path runtime_dir{std::filesystem::absolute(argv[0]).lexically_normal().parent_path()};
-    const std::filesystem::path model_dir = runtime_dir.parent_path().string()+="/resources/model";
+    const std::filesystem::path model_dir = runtime_dir.parent_path().string() + "/resources/model";
+    
+    
+    //const std::filesystem::path model_dir = runtime_dir.parent_path().string()+="/resources/model";
     dbglog logger(date, runtime_dir / "debug.log");
     DataLoader im(logger);
-    
+
     std::println("{}", cv::getBuildInformation());
-    
+
     tbb::global_control cache_window(tbb::global_control::max_allowed_parallelism, 4);
     cv::setNumThreads(4);
 
@@ -148,12 +168,12 @@ int main(int argc, char* argv[]) {
     // --------------------------------------------------------
     // DATASET & BATCH HYPERPARAMETERS
     // --------------------------------------------------------
-    constexpr int64_t batch_size = sampleCount; 
+    constexpr int64_t batch_size = sampleCount;
     size_t total_dataset_size = 0;
     size_t batch_count = 0;
-    
+
     constexpr int64_t input_rows = 32; constexpr int64_t input_cols = 24; constexpr int64_t input_channels = 1;
-    constexpr int64_t filters = 8; constexpr int64_t kernel_size = 3; constexpr int64_t hidden_size = 1; 
+    constexpr int64_t filters = 8; constexpr int64_t kernel_size = 3; constexpr int64_t hidden_size = 1;
     constexpr int64_t pool_size = 2; constexpr int64_t pool_stride = 2;
     constexpr float learning_rate = 0.02f;
     constexpr int epochs = epochCount;
@@ -185,9 +205,13 @@ int main(int argc, char* argv[]) {
     // --------------------------------------------------------
     // ONEDNN ENGINE & MEMORY DESCRIPTORS
     // --------------------------------------------------------
-    engine eng(engine::kind::cpu, 0);
-    stream strm(eng);
-    std::println("Device Stream Engine Initialized");
+    sycl::queue sycl_queue(sycl::default_selector_v);
+    engine eng = dnnl::sycl_interop::make_engine(sycl_queue.get_device(), sycl_queue.get_context());
+    stream strm = dnnl::sycl_interop::make_stream(eng, sycl_queue);
+
+    std::println("Device Stream Engine {} Initialized", 
+             (eng.get_kind() == engine::kind::gpu) ? "GPU" : "CPU");
+
 
     auto conv_src_md = memory::desc({batch_size, input_channels, input_rows, input_cols}, memory::data_type::f32, memory::format_tag::nchw);
     auto conv_weights_md = memory::desc({filters, input_channels, kernel_size, kernel_size}, memory::data_type::f32, memory::format_tag::oihw);
@@ -219,61 +243,98 @@ int main(int argc, char* argv[]) {
     std::vector<float> dataset_labels;
     const std::string data_path = (model_dir / "FLIR/images_thermal_train/data").string();
     const std::string json_annotation_path = (model_dir / "FLIR/images_thermal_train/coco.json").string();
-    
-    std::println("Data Path:{} \n Json Annotation Path: {}", data_path, json_annotation_path);
+
+    std::println("Data Path:{0} \n Json Annotation Path: {1}", data_path, json_annotation_path);
 
     // Only configure files and run dataset optimization loops if training is forced
     if (must_train_model) {
-    try {
-        std::filesystem::path cpp_data_dir = model_dir / "FLIR" / "cpp_training_data";
-        std::string img_bin = (cpp_data_dir / "images.bin").string();
-        std::string lbl_bin = (cpp_data_dir / "labels.bin").string();
+        try {
+            std::filesystem::path cpp_data_dir = model_dir / "FLIR" / "cpp_training_data";
+            std::string img_bin = (cpp_data_dir / "images.bin").string();
+            std::string lbl_bin = (cpp_data_dir / "labels.bin").string();
 
-        std::println("Loading streamlined tensor blocks directly from binary files...");
-        bool load_success = im.load_preprocessed_binaries(dataset_images, dataset_labels, img_bin, lbl_bin);
+            std::println("Loading streamlined tensor blocks directly from binary files...");
+            bool load_success = im.load_preprocessed_binaries(dataset_images, dataset_labels, img_bin, lbl_bin);
 
-        if (!load_success) {
-            std::println(std::cerr, "Error: Could not load FLIR training binaries from {}", cpp_data_dir.string());
+            if (!load_success) {
+                std::println(std::cerr, "Error: Could not load FLIR training binaries from {}", cpp_data_dir.string());
+                return EXIT_FAILURE;
+            }
+
+            const size_t values_per_image = static_cast<size_t>(input_rows * input_cols * input_channels);
+            if (dataset_labels.empty() || dataset_images.size() != dataset_labels.size() * values_per_image) {
+                std::println(std::cerr,
+                             "Error: FLIR binary sizes do not match the configured {}x{}x{} input and label count.",
+                             input_rows, input_cols, input_channels);
+                return EXIT_FAILURE;
+            }
+
+            // Shuffle the arrays so gradients optimize evenly
+            im.shuffle_dataset(dataset_images, dataset_labels, input_rows, input_cols, input_channels);
+        }
+        catch (const std::exception& e) {
+            std::println(std::cerr, "Error: [Data Load Failure] -> {}", e.what());
             return EXIT_FAILURE;
         }
 
-        const size_t values_per_image = static_cast<size_t>(input_rows * input_cols * input_channels);
-        if (dataset_labels.empty() || dataset_images.size() != dataset_labels.size() * values_per_image) {
-            std::println(std::cerr,
-                         "Error: FLIR binary sizes do not match the configured {}x{}x{} input and label count.",
-                         input_rows, input_cols, input_channels);
-            return EXIT_FAILURE;
-        }
-        
-        // Shuffle the arrays so gradients optimize evenly
-        im.shuffle_dataset(dataset_images, dataset_labels, input_rows, input_cols, input_channels);
-    } 
-    catch (const std::exception& e) {
-        std::println(std::cerr, "Error: [Data Load Failure] -> {}", e.what());
-        return EXIT_FAILURE;
-    }
-    
-    total_dataset_size = dataset_labels.size();
-    batch_count = (total_dataset_size + static_cast<size_t>(batch_size) - 1) / static_cast<size_t>(batch_size);
- 
-        // --------------------------------------------------------
-        // TRAINING BACKPROPAGATION GRADIENT STACKS
+        total_dataset_size = dataset_labels.size();
+        batch_count = (total_dataset_size + static_cast<size_t>(batch_size) - 1) / static_cast<size_t>(batch_size);
+
+              // --------------------------------------------------------
+        // TRAINING BACKPROPAGATION GRADIENT STACKS (STRICT MEMORY MAP FIX)
         // --------------------------------------------------------
         std::vector<float> diff_conv_w(conv_w.size(), 0.0f);
         std::vector<float> diff_conv_b(conv_b.size(), 0.0f);
         std::vector<float> diff_fc_w(fc_w.size(), 0.0f);
         std::vector<float> diff_fc_b(fc_b.size(), 0.0f);
 
+        // Initialize device handles natively
         auto src_mem = memory(conv_src_md, eng);
-        auto conv_w_mem = memory(conv_weights_md, eng, conv_w.data());
-        auto conv_b_mem = memory(conv_bias_md, eng, conv_b.data());
-        auto fc_w_mem = memory(fc_weights_md, eng, fc_w.data());
-        auto fc_b_mem = memory(fc_bias_md, eng, fc_b.data());
+        auto conv_w_mem = memory(conv_weights_md, eng);
+        auto conv_b_mem = memory(conv_bias_md, eng);
+        auto fc_w_mem = memory(fc_weights_md, eng);
+        auto fc_b_mem = memory(fc_bias_md, eng);
 
-        auto diff_conv_w_mem = memory(conv_weights_md, eng, diff_conv_w.data());
-        auto diff_conv_b_mem = memory(conv_bias_md, eng, diff_conv_b.data());
-        auto diff_fc_w_mem = memory(fc_weights_md, eng, diff_fc_w.data());
-        auto diff_fc_b_mem = memory(fc_bias_md, eng, diff_fc_b.data());
+        auto diff_conv_w_mem = memory(conv_weights_md, eng);
+        auto diff_conv_b_mem = memory(conv_bias_md, eng);
+        auto diff_fc_w_mem = memory(fc_weights_md, eng);
+        auto diff_fc_b_mem = memory(fc_bias_md, eng);
+
+        // Safe Device Mapping Block: Sets safe host-to-device boundaries
+        {
+            float* mapped_conv_w = static_cast<float*>(conv_w_mem.map_data());
+            std::copy(conv_w.begin(), conv_w.end(), mapped_conv_w);
+            conv_w_mem.unmap_data(mapped_conv_w);
+
+            float* mapped_conv_b = static_cast<float*>(conv_b_mem.map_data());
+            std::copy(conv_b.begin(), conv_b.end(), mapped_conv_b);
+            conv_b_mem.unmap_data(mapped_conv_b);
+
+            float* mapped_fc_w = static_cast<float*>(fc_w_mem.map_data());
+            std::copy(fc_w.begin(), fc_w.end(), mapped_fc_w);
+            fc_w_mem.unmap_data(mapped_fc_w);
+
+            float* mapped_fc_b = static_cast<float*>(fc_b_mem.map_data());
+            std::copy(fc_b.begin(), fc_b.end(), mapped_fc_b);
+            fc_b_mem.unmap_data(mapped_fc_b);
+
+            // Zero out device-resident gradient states via mapped space
+            float* m_diff_conv_w = static_cast<float*>(diff_conv_w_mem.map_data());
+            std::fill_n(m_diff_conv_w, diff_conv_w.size(), 0.0f);
+            diff_conv_w_mem.unmap_data(m_diff_conv_w);
+
+            float* m_diff_conv_b = static_cast<float*>(diff_conv_b_mem.map_data());
+            std::fill_n(m_diff_conv_b, diff_conv_b.size(), 0.0f);
+            diff_conv_b_mem.unmap_data(m_diff_conv_b);
+
+            float* m_diff_fc_w = static_cast<float*>(diff_fc_w_mem.map_data());
+            std::fill_n(m_diff_fc_w, diff_fc_w.size(), 0.0f);
+            diff_fc_w_mem.unmap_data(m_diff_fc_w);
+
+            float* m_diff_fc_b = static_cast<float*>(diff_fc_b_mem.map_data());
+            std::fill_n(m_diff_fc_b, diff_fc_b.size(), 0.0f);
+            diff_fc_b_mem.unmap_data(m_diff_fc_b);
+        }
 
         auto conv_dst_mem = memory(conv_dst_md, eng);
         auto pool_dst_mem = memory(pool_dst_md, eng);
@@ -283,6 +344,7 @@ int main(int argc, char* argv[]) {
         auto diff_fc_dst_mem = memory(fc_dst_md, eng);
         auto diff_pool_dst_mem = memory(pool_dst_md, eng);
         auto diff_conv_dst_mem = memory(conv_dst_md, eng);
+
 
         // Primitives mapping
         auto prim_conv_fwd = convolution_forward(conv_fwd_pd);
@@ -311,10 +373,11 @@ int main(int argc, char* argv[]) {
                 const size_t current_batch_size = std::min(
                     static_cast<size_t>(batch_size), total_dataset_size - offset);
 
-                float* src_handle = static_cast<float*>(src_mem.get_data_handle());
+                float* src_handle = static_cast<float*>(src_mem.map_data());
                 std::fill_n(src_handle, static_cast<size_t>(batch_size) * image_size_bytes, 0.0f);
                 std::copy_n(dataset_images.begin() + (offset * image_size_bytes),
                             current_batch_size * image_size_bytes, src_handle);
+                src_mem.unmap_data(src_handle);
 
                 image_to_features(
                     prim_conv_fwd, prim_relu_fwd, prim_pool_fwd, strm,
@@ -329,7 +392,7 @@ int main(int argc, char* argv[]) {
 
                 // 2. MINI-BATCH LOSS & LOSS GRADIENT EVALUATION
                 float batch_loss = 0.0f;
-                float* diff_fc_dst = static_cast<float*>(diff_fc_dst_mem.get_data_handle());
+                float* diff_fc_dst = static_cast<float*>(diff_fc_dst_mem.map_data());
 
                 for (int64_t b = 0; b < batch_size; ++b) {
                     if (static_cast<size_t>(b) >= current_batch_size) {
@@ -343,6 +406,7 @@ int main(int argc, char* argv[]) {
                     batch_loss -= (target * std::log(probability + 1e-7f) + (1.0f - target) * std::log(1.0f - probability + 1e-7f));
                     diff_fc_dst[b] = (probability - target) / static_cast<float>(current_batch_size);
                 }
+                diff_fc_dst_mem.unmap_data(diff_fc_dst);
                 epoch_total_loss += batch_loss;
 
                 // 3. BACKWARD PROPAGATION STEP
@@ -353,11 +417,10 @@ int main(int argc, char* argv[]) {
                 prim_conv_bwd_w.execute(strm, {{DNNL_ARG_SRC, src_mem}, {DNNL_ARG_DIFF_DST, diff_conv_dst_mem}, {DNNL_ARG_DIFF_WEIGHTS, diff_conv_w_mem}, {DNNL_ARG_DIFF_BIAS, diff_conv_b_mem}});
                 strm.wait();
 
-                // 4. SGD OPTIMIZER UPDATES
-                for (size_t i = 0; i < fc_w.size(); ++i)   fc_w[i] -= learning_rate * diff_fc_w[i];
-                for (size_t i = 0; i < fc_b.size(); ++i)   fc_b[i] -= learning_rate * diff_fc_b[i];
-                for (size_t i = 0; i < conv_w.size(); ++i) conv_w[i] -= learning_rate * diff_conv_w[i];
-                for (size_t i = 0; i < conv_b.size(); ++i) conv_b[i] -= learning_rate * diff_conv_b[i];
+                apply_sgd(fc_w_mem, diff_fc_w_mem, fc_w.size(), learning_rate);
+                apply_sgd(fc_b_mem, diff_fc_b_mem, fc_b.size(), learning_rate);
+                apply_sgd(conv_w_mem, diff_conv_w_mem, conv_w.size(), learning_rate);
+                apply_sgd(conv_b_mem, diff_conv_b_mem, conv_b.size(), learning_rate);
             }
 
             std::println("Epoch {:02d}/{} completed | Average BCE Loss: {:.6f}",
@@ -368,8 +431,12 @@ int main(int argc, char* argv[]) {
         std::println("Batch dataset training complete.");
 
         // Serialize and log save events exclusively at loop finalization
+        copy_from_memory(conv_w_mem, conv_w);
+        copy_from_memory(conv_b_mem, conv_b);
+        copy_from_memory(fc_w_mem, fc_w);
+        copy_from_memory(fc_b_mem, fc_b);
         im.save_onednn_model(model_path, conv_w, conv_b, fc_w, fc_b);
-    } 
+    }
     else {
         std::println("--------------------------------------------------");
         std::println("Loaded pre-compiled weights. Preparing FLIR samples for inference...");
@@ -407,10 +474,19 @@ int main(int argc, char* argv[]) {
     }
 
     auto inference_src_mem = memory(conv_src_md, eng);
-    auto inference_conv_weights = memory(conv_weights_md, eng, conv_w.data());
-    auto inference_conv_biases = memory(conv_bias_md, eng, conv_b.data());
-    auto inference_fc_weights = memory(fc_weights_md, eng, fc_w.data());
-    auto inference_fc_biases = memory(fc_bias_md, eng, fc_b.data());
+    auto inference_conv_weights = memory(conv_weights_md, eng);
+    auto inference_conv_biases = memory(conv_bias_md, eng);
+    auto inference_fc_weights = memory(fc_weights_md, eng);
+    auto inference_fc_biases = memory(fc_bias_md, eng);
+    for (const auto& [device_memory, host_values] : {
+             std::pair<memory*, const std::vector<float>*>{&inference_conv_weights, &conv_w},
+             {&inference_conv_biases, &conv_b},
+             {&inference_fc_weights, &fc_w},
+             {&inference_fc_biases, &fc_b}}) {
+        float* mapped_values = static_cast<float*>(device_memory->map_data());
+        std::copy(host_values->begin(), host_values->end(), mapped_values);
+        device_memory->unmap_data(mapped_values);
+    }
     auto inference_conv_dst = memory(conv_dst_md, eng);
     auto inference_pool_dst = memory(pool_dst_md, eng);
     auto inference_fc_src = memory(fc_src_md, eng, inference_pool_dst.get_data_handle());
@@ -430,10 +506,11 @@ int main(int argc, char* argv[]) {
         const size_t current_batch_size = std::min(
             static_cast<size_t>(batch_size), total_dataset_size - offset);
         const size_t current_batch_values = current_batch_size * inference_image_values;
-        float* inference_source = static_cast<float*>(inference_src_mem.get_data_handle());
+        float* inference_source = static_cast<float*>(inference_src_mem.map_data());
         std::fill_n(inference_source, static_cast<size_t>(batch_size) * inference_image_values, 0.0f);
         std::copy_n(dataset_images.begin() + offset * inference_image_values,
                     current_batch_values, inference_source);
+        inference_src_mem.unmap_data(inference_source);
 
         image_to_features(
             inference_conv_primitive, inference_relu_primitive, inference_pool_primitive, strm,

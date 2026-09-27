@@ -9,9 +9,6 @@ require_command() {
 	fi
 }
 
-cleanup_artifacts() {
-	rm -rf "$BUILD_DIR" "$INSTALL_DIR" "$OUT_DIR"
-}
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
